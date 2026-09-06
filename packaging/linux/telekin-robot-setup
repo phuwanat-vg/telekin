@@ -11,11 +11,22 @@
 #   sudo telekin-robot-setup autologin USER     sign USER in at boot, so the screen is there after a reboot
 #   sudo telekin-robot-setup firewall           allow UDP 9631 through ufw, if ufw is on
 #   sudo telekin-robot-setup service USER       enable and start chassis@USER now and at boot
-#   sudo telekin-robot-setup all USER           x11 + autologin USER + firewall + service USER
+#   sudo telekin-robot-setup headless [WxH] [CONNECTOR]
+#                                               pretend a monitor is plugged in, for a robot with no
+#                                               screen (default 1920x1080 on the first HDMI port)
+#   sudo telekin-robot-setup all USER           x11 + autologin USER + firewall + service USER,
+#                                               plus headless when no monitor is connected
 #
 # x11 and autologin edit GDM's custom.conf. The first edit keeps a copy beside
 # it as custom.conf.telekin-bak. A reboot applies x11; autologin applies at
 # the next boot too.
+#
+# headless matters more than it sounds: with nothing on HDMI, Xorg makes up a
+# 1024x768 screen that GNOME never paints, and the viewer shows solid black.
+# It adds video=<connector>:<WxH>@60D to the kernel command line (Pi
+# cmdline.txt, GRUB, or extlinux), which makes the kernel drive that port as
+# if a monitor were there. A reboot applies it. Edited files get the same
+# .telekin-bak copy.
 set -euo pipefail
 
 PORT=9631
@@ -25,6 +36,17 @@ if [ -z "$CONF" ]; then
         [ -f "$c" ] && CONF="$c" && break
     done
 fi
+
+# Where the kernel command line lives, in order of how robots usually boot:
+# Raspberry Pi (one-line cmdline.txt), GRUB (x86), extlinux (Jetson).
+# The TELEKIN_* overrides exist so the script can be tested on a machine
+# that is none of these.
+CMDLINE="${TELEKIN_CMDLINE:-}"
+[ -n "$CMDLINE" ] || [ ! -f /boot/firmware/cmdline.txt ] || CMDLINE=/boot/firmware/cmdline.txt
+GRUB_DEFAULT="${TELEKIN_GRUB_DEFAULT:-/etc/default/grub}"
+EXTLINUX="${TELEKIN_EXTLINUX:-/boot/extlinux/extlinux.conf}"
+DRM="${TELEKIN_DRM_SYS:-/sys/class/drm}"
+PROC_CMDLINE="${TELEKIN_PROC_CMDLINE:-/proc/cmdline}"
 
 usage() {
     sed -n '2,/^set -euo/p' "$0" | grep -E '^#( |$)' | sed 's/^# \{0,1\}//' | sed '1d'
@@ -47,7 +69,34 @@ need_user() {
 }
 
 backup_conf() {
-    [ -f "$CONF.telekin-bak" ] || cp -p "$CONF" "$CONF.telekin-bak"
+    backup_file "$CONF"
+}
+
+backup_file() {
+    [ -f "$1.telekin-bak" ] || cp -p "$1" "$1.telekin-bak"
+}
+
+# Display connectors as the kernel names them (HDMI-A-1, DP-1, ...) with
+# their status, read from sysfs so it works with no X server at all.
+connectors() {
+    local d name
+    for d in "$DRM"/card[0-9]*-*; do
+        [ -f "$d/status" ] || continue
+        name="${d##*/}"
+        name="${name#card*-}"
+        echo "$name $(cat "$d/status")"
+    done
+}
+
+connected_outputs() { connectors | awk '$2 == "connected" { print $1 }'; }
+# No early `exit` in these: with pipefail, a reader that quits first turns
+# the writer's SIGPIPE into a failed pipeline and `set -e` ends the script.
+first_hdmi() { connectors | awk '$1 ~ /^HDMI/ && !done { print $1; done = 1 }'; }
+
+# The video= entry the kernel booted with, if any.
+forced_mode() {
+    [ -r "$PROC_CMDLINE" ] || return 0
+    awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^video=/) { print $i; exit } }' "$PROC_CMDLINE"
 }
 
 # Set KEY=VALUE in the [daemon] section, replacing any existing line for the
@@ -111,6 +160,58 @@ do_service() {
     fi
 }
 
+do_headless() {
+    need_root
+    local mode="${1:-1920x1080}" conn="${2:-}"
+    [[ "$mode" =~ ^[0-9]+x[0-9]+$ ]] || die "the mode must look like 1920x1080, not '$mode'"
+    [ -n "$conn" ] || conn="$(first_hdmi)"
+    [ -n "$conn" ] || conn=HDMI-A-1
+    local param="video=${conn}:${mode}@60D"
+
+    if [ -n "$CMDLINE" ] && [ -f "$CMDLINE" ]; then
+        backup_file "$CMDLINE"
+        # cmdline.txt is a single line. Drop any earlier video= for this
+        # connector, then append ours.
+        sed -i -E "1 s/ ?video=${conn}:[^ ]*//g; 1 s/[[:space:]]*\$/ ${param}/" "$CMDLINE"
+        echo "headless: ${param} added to $CMDLINE"
+    elif [ -f "$GRUB_DEFAULT" ] && command -v update-grub >/dev/null; then
+        backup_file "$GRUB_DEFAULT"
+        if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' "$GRUB_DEFAULT"; then
+            sed -i -E "/^GRUB_CMDLINE_LINUX_DEFAULT=/ { s/ ?video=${conn}:[^ \"]*//g; s/^(GRUB_CMDLINE_LINUX_DEFAULT=\")(.*)\"/\1\2 ${param}\"/ }" "$GRUB_DEFAULT"
+        else
+            printf 'GRUB_CMDLINE_LINUX_DEFAULT="%s"
+' "$param" >> "$GRUB_DEFAULT"
+        fi
+        update-grub >/dev/null
+        echo "headless: ${param} added to $GRUB_DEFAULT (update-grub run)"
+    elif [ -f "$EXTLINUX" ]; then
+        backup_file "$EXTLINUX"
+        sed -i -E "/^[[:space:]]*APPEND / { s/ ?video=${conn}:[^ ]*//g; s/[[:space:]]*\$/ ${param}/ }" "$EXTLINUX"
+        echo "headless: ${param} added to every APPEND line in $EXTLINUX"
+    else
+        die "no kernel command line I know how to edit (looked for /boot/firmware/cmdline.txt, /etc/default/grub, /boot/extlinux/extlinux.conf). Add '${param}' to the kernel parameters by hand."
+    fi
+    echo "          the kernel will drive ${conn} at ${mode} from the next reboot, monitor or not"
+}
+
+check_display() {
+    local connected forced
+    if [ -z "$(connectors)" ]; then
+        echo "display:         no DRM connectors under $DRM (not a KMS graphics stack?)"
+        return
+    fi
+    connected="$(connected_outputs | tr '
+' ' ')"
+    forced="$(forced_mode)"
+    if [ -n "$connected" ]; then
+        echo "display:         monitor connected on ${connected% }"
+    elif [ -n "$forced" ]; then
+        echo "display:         no monitor; kernel forces $forced (fine for a headless robot)"
+    else
+        echo "display:         no monitor and nothing forced — GNOME paints nothing and the viewer shows black; run: sudo telekin-robot-setup headless"
+    fi
+}
+
 do_check() {
     echo "GDM config:      ${CONF:-(none found)}"
     if [ -n "$CONF" ] && [ -f "$CONF" ]; then
@@ -126,6 +227,7 @@ do_check() {
     else
         echo "console session: nobody is signed in on the console"
     fi
+    check_display
     if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
         if ufw status | grep -qE "^$PORT/udp"; then
             echo "firewall:        ufw active, UDP $PORT allowed"
@@ -151,15 +253,20 @@ case "$cmd" in
     autologin) do_autologin "${2:-}" ;;
     firewall)  do_firewall ;;
     service)   do_service "${2:-}" ;;
+    headless)  do_headless "${2:-}" "${3:-}" ;;
     all)
         need_user "${2:-}" all
         do_x11
         do_autologin "$2"
         do_firewall
+        if [ -n "$(connectors)" ] && [ -z "$(connected_outputs)" ] && [ -z "$(forced_mode)" ]; then
+            echo "no monitor is connected, so:"
+            do_headless
+        fi
         do_service "$2"
         echo
-        echo "done. Reboot to apply the X11 and autologin changes:  sudo reboot"
+        echo "done. Reboot to apply the X11, autologin and display changes:  sudo reboot"
         ;;
     ""|-h|--help|help) usage ;;
-    *) die "unknown command '$cmd' (try: check, x11, autologin, firewall, service, all)" ;;
+    *) die "unknown command '$cmd' (try: check, x11, autologin, firewall, service, headless, all)" ;;
 esac

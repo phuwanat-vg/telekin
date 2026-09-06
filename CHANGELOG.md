@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.5 — 2026-09-07
+
+- `telekin-robot-setup headless [WxH] [CONNECTOR]`: a robot with nothing on
+  HDMI gives the viewer a black screen, because Xorg makes up a display GNOME
+  never paints. The new step adds `video=<port>:<WxH>@60D` to the kernel
+  command line (Pi `cmdline.txt`, GRUB, or extlinux) so the port is driven as
+  if a monitor were there. `check` reports connected outputs and any forced
+  mode; `all` adds `headless` when no monitor is connected.
+
 ## 1.0.4 — 2026-09-06
 
 - The **Update to x.y.z** button now opens the download. Every earlier
