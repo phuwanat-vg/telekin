@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.4 — 2026-09-06
+
+- The **Update to x.y.z** button now opens the download. Every earlier
+  build silently dropped the click: the viewer is built without eframe's
+  default features and the one that opens links was never turned back on.
+  Installs of 1.0.1–1.0.3 must fetch this version by hand from the releases
+  page; from here on the button works.
+
 ## 1.0.3 — 2026-09-06
 
 - Files view, Windows: the Up arrow from a drive root (`C:\`) now shows the

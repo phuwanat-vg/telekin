@@ -819,6 +819,7 @@ dependencies = [
  "raw-window-handle",
  "smithay-clipboard",
  "web-time",
+ "webbrowser",
  "winit",
 ]
 
@@ -3077,7 +3078,7 @@ dependencies = [
 
 [[package]]
 name = "telekin"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -3098,7 +3099,7 @@ dependencies = [
 
 [[package]]
 name = "telekin-capture"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "libc",
@@ -3110,7 +3111,7 @@ dependencies = [
 
 [[package]]
 name = "telekin-codec"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "openh264",
@@ -3120,7 +3121,7 @@ dependencies = [
 
 [[package]]
 name = "telekin-host"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "argon2",
@@ -3141,7 +3142,7 @@ dependencies = [
 
 [[package]]
 name = "telekin-input"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "telekin-proto",
@@ -3152,7 +3153,7 @@ dependencies = [
 
 [[package]]
 name = "telekin-proto"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "postcard",
@@ -3162,7 +3163,7 @@ dependencies = [
 
 [[package]]
 name = "telekin-transport"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "mdns-sd",
@@ -3781,6 +3782,22 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webbrowser"
+version = "1.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62c35be770821a214dbc362fc26908c853e776c0004294d0b10b8a6bad582f94"
+dependencies = [
+ "jni",
+ "log",
+ "ndk-context",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "url",
+ "web-sys",
 ]
 
 [[package]]

@@ -61,15 +61,15 @@ Each step is also available on its own (`x11`, `autologin USER`, `firewall`,
 beside it.
 
 Without internet on the robot, install the `.deb` from the releases page
-directly: `sudo apt install ./telekin-host_1.0.3-1_arm64.deb`.
+directly: `sudo apt install ./telekin-host_1.0.4-1_arm64.deb`.
 
 ### Computer
 
 | Platform | Install | Upgrade |
 |---|---|---|
-| Windows 10/11 | `telekin-1.0.3-windows-x64-setup.exe` — per-user, no admin needed | run the newer setup; it replaces in place |
+| Windows 10/11 | `telekin-1.0.4-windows-x64-setup.exe` — per-user, no admin needed | run the newer setup; it replaces in place |
 | Ubuntu | same repository as above, then `sudo apt install telekin` | `sudo apt upgrade` |
-| macOS 11+ | `telekin-1.0.3-macos.dmg`, drag to Applications. Unsigned: right-click → Open the first time | drag the new one over |
+| macOS 11+ | `telekin-1.0.4-macos.dmg`, drag to Applications. Unsigned: right-click → Open the first time | drag the new one over |
 
 The viewer checks for a newer version at start and shows an **Update to
 x.y.z** button in the corner of the first screen when there is one. Nothing is

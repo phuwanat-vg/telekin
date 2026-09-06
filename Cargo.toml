@@ -11,7 +11,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.0.3"
+version = "1.0.4"
 edition = "2021"
 license = "MIT"
 authors = ["Phuwanat, IRiSH LAB <kaikangofusan@gmail.com>"]
@@ -45,7 +45,7 @@ mdns-sd = "0.11"
 openh264 = "0.6"
 
 # The viewer is a real GUI: connection form, discovery list, live settings.
-eframe = { version = "0.36", default-features = false, features = ["glow", "wayland", "x11"] }
+eframe = { version = "0.36", default-features = false, features = ["glow", "wayland", "x11", "links"] }
 egui = "0.36"
 
 # The viewer's update check: one small HTTPS GET of a JSON manifest. rustls,
