@@ -558,7 +558,7 @@ fn file_request(
         }
         Command::MakeDir { path } => FileOp::MakeDir { path },
         Command::Remove { path } => FileOp::Remove { path },
-        Command::Download { remote, local } => {
+        Command::Download { remote, local, batch } => {
             let mut st = state.lock().expect("file state poisoned");
             // The reply carries only an id, so where this lands is recorded
             // here before the request goes out.
@@ -568,10 +568,38 @@ fn file_request(
                 crate::files::remote_file_name(&remote).to_string(),
                 Direction::FromRobot,
                 0,
+                batch,
             );
             FileOp::Get { path: remote }
         }
-        Command::Upload { local, remote } => {
+        Command::MakeDirAll { path } => FileOp::MakeDirAll { path },
+        Command::DownloadTree { remote, local_parent } => {
+            let mut st = state.lock().expect("file state poisoned");
+            let name = crate::files::remote_file_name(&remote).to_string();
+            let batch = st.new_batch(name, Direction::FromRobot);
+            st.remember_tree(id, batch, local_parent);
+            FileOp::Tree { path: remote }
+        }
+        Command::UploadTree { local, remote_parent } => {
+            let name = local
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "folder".into());
+            let batch = state
+                .lock()
+                .expect("file state poisoned")
+                .new_batch(name.clone(), Direction::ToRobot);
+            // The walk is disk work of unknown size; it runs on its own
+            // thread and feeds the queue, which the window drains.
+            let state = state.clone();
+            let waker = waker.clone();
+            std::thread::spawn(move || {
+                walk_local_tree(local, remote_parent, name, batch, &state);
+                waker.get().map(egui::Context::request_repaint);
+            });
+            return None;
+        }
+        Command::Upload { local, remote, batch } => {
             let len = match std::fs::metadata(&local) {
                 Ok(m) => m.len(),
                 Err(e) => {
@@ -585,6 +613,7 @@ fn file_request(
                 crate::files::remote_file_name(&remote).to_string(),
                 Direction::ToRobot,
                 len,
+                batch,
             );
             let conn = conn.clone();
             let state = state.clone();
@@ -626,6 +655,69 @@ fn file_request(
         }
     };
     Some(ClientMsg::Files(FileRequest { id, op }))
+}
+
+/// Find every file under a local folder and queue it for upload.
+///
+/// Directories are queued first as `MakeDirAll`, so empty folders are
+/// mirrored too; files do not depend on that, because the host creates a
+/// missing parent when a file arrives.
+fn walk_local_tree(
+    local: std::path::PathBuf,
+    remote_parent: String,
+    name: String,
+    batch: u64,
+    state: &crate::files::Shared,
+) {
+    use crate::files::{remote_join, remote_join_rel, Command};
+
+    let remote_root = remote_join(&remote_parent, &name);
+    let mut dirs: Vec<Command> = vec![Command::MakeDirAll { path: remote_root.clone() }];
+    let mut files: Vec<Command> = Vec::new();
+    let mut stack = vec![(local.clone(), String::new())];
+    let mut count = 0usize;
+
+    while let Some((dir, rel)) = stack.pop() {
+        let Ok(read) = std::fs::read_dir(&dir) else { continue };
+        let mut entries: Vec<_> = read.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let Ok(kind) = entry.file_type() else { continue };
+            if kind.is_symlink() {
+                continue;
+            }
+            let part = entry.file_name().to_string_lossy().into_owned();
+            let child_rel = if rel.is_empty() { part } else { format!("{rel}/{part}") };
+            count += 1;
+            if count > telekin_proto::MAX_TREE_ENTRIES {
+                if let Some(b) = state.lock().expect("file state poisoned").batch_mut(batch) {
+                    b.truncated = true;
+                }
+                break;
+            }
+            if kind.is_dir() {
+                dirs.push(Command::MakeDirAll {
+                    path: remote_join_rel(&remote_root, &child_rel),
+                });
+                stack.push((entry.path(), child_rel));
+            } else if kind.is_file() {
+                files.push(Command::Upload {
+                    local: entry.path(),
+                    remote: remote_join_rel(&remote_root, &child_rel),
+                    batch: Some(batch),
+                });
+            }
+        }
+    }
+
+    let mut st = state.lock().expect("file state poisoned");
+    if files.is_empty() && dirs.len() == 1 {
+        // An empty folder still gets created on the other side; the row just
+        // has nothing to count.
+    }
+    for cmd in dirs.into_iter().chain(files) {
+        st.enqueue(cmd);
+    }
 }
 
 /// Push one local file up on its own stream.
@@ -684,6 +776,36 @@ fn apply_file_reply(reply: telekin_proto::FileReply, state: &crate::files::Share
         }
         FileReply::Sending { id, len } => st.set_total(id, len),
         FileReply::Text { path, text, .. } => st.opened(&path, text),
+        FileReply::Tree { id, tree } => {
+            let Some((batch, local_parent)) = st.take_tree(id) else { return };
+            let name = crate::files::remote_file_name(&tree.root).to_string();
+            let local_root = local_parent.join(&name);
+            // Directories first, in the order the host listed them, then
+            // every file joins the queue with its batch.
+            let mut failed = None;
+            if let Err(e) = std::fs::create_dir_all(&local_root) {
+                failed = Some(format!("{}: {e}", local_root.display()));
+            }
+            for d in &tree.dirs {
+                let path = crate::files::rel_to_local(&local_root, d);
+                if let Err(e) = std::fs::create_dir_all(&path) {
+                    failed.get_or_insert_with(|| format!("{}: {e}", path.display()));
+                }
+            }
+            if let Some(b) = st.batch_mut(batch) {
+                b.truncated = tree.truncated;
+                b.error = failed.clone();
+            }
+            if failed.is_none() {
+                for f in &tree.files {
+                    st.enqueue(crate::files::Command::Download {
+                        remote: crate::files::remote_join_rel(&tree.root, &f.rel),
+                        local: crate::files::rel_to_local(&local_root, &f.rel),
+                        batch: Some(batch),
+                    });
+                }
+            }
+        }
         FileReply::Done { id } => {
             if st.was_save(id) {
                 st.finish_save(Ok(()));
@@ -696,6 +818,10 @@ fn apply_file_reply(reply: telekin_proto::FileReply, state: &crate::files::Share
             // looking, rather than on the file pane behind it.
             if st.was_save(id) {
                 st.finish_save(Err(reason));
+            } else if let Some((batch, _)) = st.take_tree(id) {
+                if let Some(b) = st.batch_mut(batch) {
+                    b.error = Some(reason);
+                }
             } else {
                 st.loading = false;
                 st.finish(id, Err(reason.clone()));

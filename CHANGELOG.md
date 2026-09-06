@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Files view: whole folders copy in either direction (empty folders and
+  nesting preserved; symlinks skipped; a robot-side tree is capped at 20,000
+  entries and says so). A folder shows as one row with files-landed and byte
+  progress. At most four files move at once, so a robot's SD card is not
+  asked for hundreds simultaneously. Both panes refresh when the last file
+  lands.
+- The version label re-runs the update check when clicked.
+- Protocol TK/1 v8 (Tree, MakeDirAll).
+
 ## 1.0.0 — 2026-09-06
 
 First release.

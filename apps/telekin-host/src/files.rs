@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use telekin_proto::{DirEntry, DirListing};
+use telekin_proto::{DirEntry, DirListing, Tree, TreeFile, MAX_TREE_ENTRIES};
 
 /// List a directory. An empty path means the account's home.
 pub fn list(path: &str) -> anyhow::Result<DirListing> {
@@ -82,6 +82,69 @@ pub fn list(path: &str) -> anyhow::Result<DirListing> {
             .filter(|p| !p.is_empty()),
         entries,
     })
+}
+
+/// Everything under a directory, for copying it whole.
+///
+/// Symbolic links are skipped rather than followed. A link out of the tree
+/// (`~/data -> /mnt/ssd`) would otherwise pull a disk into a folder copy, and
+/// a link *into* the tree would copy it twice; a robot's home is full of both.
+/// The walk stops at [`MAX_TREE_ENTRIES`] and says so, instead of returning a
+/// reply the size of a cache directory.
+pub fn tree(path: &str) -> anyhow::Result<Tree> {
+    let root = resolve(path)?;
+    let meta = std::fs::metadata(&root).with_context(|| describe(&root))?;
+    anyhow::ensure!(meta.is_dir(), "{} is a file, not a folder", root.display());
+
+    let mut out = Tree {
+        root: root.to_string_lossy().into_owned(),
+        ..Default::default()
+    };
+    // Depth-first with an explicit stack, parents listed before children so
+    // the receiver can create directories in the order they arrive.
+    let mut stack: Vec<(PathBuf, String)> = vec![(root.clone(), String::new())];
+    while let Some((dir, rel)) = stack.pop() {
+        let read = match std::fs::read_dir(&dir) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::debug!("skipped {}: {e}", dir.display());
+                continue;
+            }
+        };
+        let mut entries: Vec<_> = read.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            if out.dirs.len() + out.files.len() >= MAX_TREE_ENTRIES {
+                out.truncated = true;
+                return Ok(out);
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let child_rel = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+            let Ok(kind) = entry.file_type() else { continue };
+            if kind.is_symlink() {
+                continue;
+            }
+            if kind.is_dir() {
+                out.dirs.push(child_rel.clone());
+                stack.push((entry.path(), child_rel));
+            } else if kind.is_file() {
+                let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                out.files.push(TreeFile { rel: child_rel, len });
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Create a directory and whatever is missing above it. Existing is fine.
+pub fn make_dir_all(path: &str) -> anyhow::Result<()> {
+    let dir = resolve(path)?;
+    if dir.is_dir() {
+        return Ok(());
+    }
+    anyhow::ensure!(!dir.exists(), "{} exists and is not a folder", dir.display());
+    std::fs::create_dir_all(&dir).with_context(|| describe(&dir))?;
+    Ok(())
 }
 
 pub fn make_dir(path: &str) -> anyhow::Result<()> {
@@ -215,11 +278,11 @@ pub fn begin_write(path: &str) -> anyhow::Result<(std::fs::File, Incoming)> {
     let parent = final_path
         .parent()
         .context("cannot write to a filesystem root")?;
-    anyhow::ensure!(
-        parent.is_dir(),
-        "{} is not a folder on this machine",
-        parent.display()
-    );
+    if !parent.is_dir() {
+        // A folder copy sends files the moment it can; making each one wait
+        // for its directory to be acknowledged would serialise the transfer.
+        std::fs::create_dir_all(parent).with_context(|| describe(parent))?;
+    }
     anyhow::ensure!(
         !final_path.is_dir(),
         "{} is a folder here; pick another name",
@@ -461,6 +524,75 @@ turn: 0.4
             "the file was damaged by a refused save"
         );
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_tree_lists_everything_with_parents_first_and_skips_links() {
+        let dir = temp_dir("tree");
+        std::fs::create_dir_all(dir.join("maps/old")).expect("dirs");
+        std::fs::create_dir_all(dir.join("empty")).expect("dirs");
+        std::fs::write(dir.join("maps/a.pgm"), b"12345").expect("file");
+        std::fs::write(dir.join("maps/old/b.pgm"), b"1").expect("file");
+        std::fs::write(dir.join("top.txt"), b"").expect("file");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/etc", dir.join("escape")).expect("link");
+
+        let t = tree(&dir.to_string_lossy()).expect("tree");
+        assert!(!t.truncated);
+        // Every directory, parents before children, using `/` throughout.
+        let dirs: Vec<&str> = t.dirs.iter().map(String::as_str).collect();
+        assert!(dirs.contains(&"maps"), "{dirs:?}");
+        assert!(dirs.contains(&"maps/old"), "{dirs:?}");
+        assert!(dirs.contains(&"empty"), "empty folders must be mirrored too: {dirs:?}");
+        let maps = dirs.iter().position(|d| *d == "maps").unwrap();
+        let old = dirs.iter().position(|d| *d == "maps/old").unwrap();
+        assert!(maps < old, "parent must come before child");
+        assert!(!dirs.iter().any(|d| d.contains("escape")), "a symlink was followed");
+
+        let files: Vec<(&str, u64)> = t.files.iter().map(|f| (f.rel.as_str(), f.len)).collect();
+        assert!(files.contains(&("maps/a.pgm", 5)), "{files:?}");
+        assert!(files.contains(&("maps/old/b.pgm", 1)), "{files:?}");
+        assert!(files.contains(&("top.txt", 0)), "{files:?}");
+        assert!(!t.files.iter().any(|f| f.rel.contains('\\')), "host separator leaked into rel paths");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_huge_tree_is_cut_off_and_says_so() {
+        let dir = temp_dir("bigtree");
+        for i in 0..(MAX_TREE_ENTRIES + 50) {
+            std::fs::write(dir.join(format!("f{i}")), b"").expect("file");
+        }
+        let t = tree(&dir.to_string_lossy()).expect("tree");
+        assert!(t.truncated, "walk did not stop");
+        assert_eq!(t.files.len(), MAX_TREE_ENTRIES);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn make_dir_all_is_idempotent_and_makes_parents() {
+        let dir = temp_dir("mkdirall");
+        let deep = dir.join("a/b/c");
+        make_dir_all(&deep.to_string_lossy()).expect("first");
+        make_dir_all(&deep.to_string_lossy()).expect("again, must not fail");
+        assert!(deep.is_dir());
+        // But a file in the way is still an error, not silently accepted.
+        let file = dir.join("file");
+        std::fs::write(&file, b"x").expect("file");
+        assert!(make_dir_all(&file.to_string_lossy()).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_upload_into_a_missing_folder_creates_it() {
+        let dir = temp_dir("putdeep");
+        let dest = dir.join("new/deeper/file.bin");
+        let (file, incoming) = begin_write(&dest.to_string_lossy()).expect("begin");
+        drop(file);
+        incoming.commit().expect("commit");
+        assert!(dest.exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 

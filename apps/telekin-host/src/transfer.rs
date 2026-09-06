@@ -70,6 +70,23 @@ pub fn handle(
                 }
             });
         }
+        FileOp::Tree { path } => {
+            tokio::task::spawn_blocking(move || {
+                let reply = match crate::files::tree(&path) {
+                    Ok(tree) => FileReply::Tree { id, tree },
+                    Err(e) => failed(id, e),
+                };
+                let _ = out.send(HostMsg::Files(reply));
+            });
+        }
+        FileOp::MakeDirAll { path } => {
+            tokio::task::spawn_blocking(move || {
+                let _ = out.send(HostMsg::Files(done_or_failed(
+                    id,
+                    crate::files::make_dir_all(&path),
+                )));
+            });
+        }
         FileOp::ReadText { path } => {
             tokio::task::spawn_blocking(move || {
                 let reply = match crate::files::read_text(&path) {

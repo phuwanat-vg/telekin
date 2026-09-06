@@ -121,6 +121,9 @@ pub struct ViewerApp {
     /// Set once Close has been pressed on an edited file, so the second press
     /// is the one that discards it.
     pub(crate) close_confirmed: bool,
+    /// Whether transfers were running on the previous frame, so the panes
+    /// can be refreshed exactly once when the last one lands.
+    pub(crate) transfers_were_busy: bool,
     /// Scroll not yet worth a whole line. A trackpad sends a stream of
     /// fractions; dropping each one leaves the wheel feeling dead.
     scroll_carry: egui::Vec2,
@@ -181,6 +184,7 @@ impl ViewerApp {
             remote_pick: None,
             new_folder: String::new(),
             close_confirmed: false,
+            transfers_were_busy: false,
             scroll_carry: egui::Vec2::ZERO,
             machine: None,
             update: None,

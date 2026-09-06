@@ -23,8 +23,15 @@ pub enum Command {
     List { path: String },
     MakeDir { path: String },
     Remove { path: String },
-    Download { remote: String, local: PathBuf },
-    Upload { local: PathBuf, remote: String },
+    /// One file. `batch` ties it to a folder copy, when it is part of one.
+    Download { remote: String, local: PathBuf, batch: Option<u64> },
+    Upload { local: PathBuf, remote: String, batch: Option<u64> },
+    /// A whole folder, robot to here. Lands as `local_parent/<folder name>`.
+    DownloadTree { remote: String, local_parent: PathBuf },
+    /// A whole folder, here to the robot. Lands as `remote_parent/<folder name>`.
+    UploadTree { local: PathBuf, remote_parent: String },
+    /// Create a folder on the robot, parents included, for a folder copy.
+    MakeDirAll { path: String },
     /// Fetch a robot file to edit in place.
     Open { path: String },
     /// Write an edited file back to the robot.
@@ -50,6 +57,39 @@ pub struct Transfer {
     pub total: u64,
     /// `None` while running; `Some(Ok(()))` or the reason it stopped.
     pub outcome: Option<Result<(), String>>,
+    /// The folder copy this belongs to, if any.
+    pub batch: Option<u64>,
+}
+
+/// A folder being copied: one row in the transfer list standing for every
+/// file under it. Fifty rows scrolling past would say less than "37 of 50".
+#[derive(Debug, Clone)]
+pub struct Batch {
+    pub id: u64,
+    pub name: String,
+    pub direction: Direction,
+    /// Files still waiting their turn in the queue.
+    pub queued: usize,
+    /// Set when the robot cut the listing off at its limit.
+    pub truncated: bool,
+    /// Something that stopped the whole copy, before any file moved.
+    pub error: Option<String>,
+}
+
+/// What the transfer list shows for a batch, added up from its files.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BatchProgress {
+    pub files_total: usize,
+    pub files_done: usize,
+    pub files_failed: usize,
+    pub bytes_done: u64,
+    pub bytes_total: u64,
+}
+
+impl BatchProgress {
+    pub fn finished(&self) -> bool {
+        self.files_done + self.files_failed == self.files_total
+    }
 }
 
 impl Transfer {
@@ -104,6 +144,14 @@ pub struct State {
     pub transfers: Vec<Transfer>,
     /// The file being edited, if any.
     pub editor: Option<Editor>,
+    /// Folder copies in progress or finished.
+    pub batches: Vec<Batch>,
+    /// Transfers waiting to start. A folder of five hundred files must not
+    /// open five hundred streams at once; the UI drains this a few at a
+    /// time, so the robot sees a steady handful rather than a flood.
+    queue: std::collections::VecDeque<Command>,
+    /// Tree requests in flight: request id → (batch, where to put it).
+    pending_trees: HashMap<u64, (u64, PathBuf)>,
     /// Where each in-flight download is being written. The host's reply
     /// carries only an id, so the destination has to be remembered here.
     destinations: HashMap<u64, PathBuf>,
@@ -134,7 +182,14 @@ impl State {
         self.destinations.remove(&id)
     }
 
-    pub fn begin(&mut self, id: u64, name: String, direction: Direction, total: u64) {
+    pub fn begin(
+        &mut self,
+        id: u64,
+        name: String,
+        direction: Direction,
+        total: u64,
+        batch: Option<u64>,
+    ) {
         self.transfers.push(Transfer {
             id,
             name,
@@ -142,7 +197,99 @@ impl State {
             done: 0,
             total,
             outcome: None,
+            batch,
         });
+        if let Some(b) = batch.and_then(|b| self.batches.iter_mut().find(|x| x.id == b)) {
+            b.queued = b.queued.saturating_sub(1);
+        }
+    }
+
+    // ----------------------------------------------------------- folder copies
+
+    /// Open a folder copy. Files are added as the tree arrives (downloads)
+    /// or as the local walk finds them (uploads).
+    pub fn new_batch(&mut self, name: String, direction: Direction) -> u64 {
+        let id = self.next_id();
+        self.batches.push(Batch {
+            id,
+            name,
+            direction,
+            queued: 0,
+            truncated: false,
+            error: None,
+        });
+        id
+    }
+
+    pub fn batch_mut(&mut self, id: u64) -> Option<&mut Batch> {
+        self.batches.iter_mut().find(|b| b.id == id)
+    }
+
+    /// Put a command at the back of the queue. Downloads and uploads count
+    /// against their batch so the row can say how many are still waiting.
+    pub fn enqueue(&mut self, command: Command) {
+        let batch = match &command {
+            Command::Download { batch, .. } | Command::Upload { batch, .. } => *batch,
+            _ => None,
+        };
+        if let Some(b) = batch.and_then(|b| self.batch_mut(b)) {
+            b.queued += 1;
+        }
+        self.queue.push_back(command);
+    }
+
+    /// Commands that may start now: everything that is not a transfer, plus
+    /// as many transfers as fit under `max_inflight` running at once.
+    pub fn take_ready(&mut self, max_inflight: usize) -> Vec<Command> {
+        let mut out = Vec::new();
+        let mut running = self.running();
+        while let Some(front) = self.queue.front() {
+            let is_transfer = matches!(front, Command::Download { .. } | Command::Upload { .. });
+            if is_transfer && running >= max_inflight {
+                break;
+            }
+            if is_transfer {
+                running += 1;
+            }
+            out.push(self.queue.pop_front().expect("front was Some"));
+        }
+        out
+    }
+
+    pub fn queued(&self) -> usize {
+        self.queue.len()
+    }
+
+    pub fn remember_tree(&mut self, request: u64, batch: u64, local_parent: PathBuf) {
+        self.pending_trees.insert(request, (batch, local_parent));
+    }
+
+    pub fn take_tree(&mut self, request: u64) -> Option<(u64, PathBuf)> {
+        self.pending_trees.remove(&request)
+    }
+
+    /// Add up a batch from its files.
+    pub fn batch_progress(&self, batch: u64) -> BatchProgress {
+        let mut p = BatchProgress::default();
+        for t in self.transfers.iter().filter(|t| t.batch == Some(batch)) {
+            p.files_total += 1;
+            p.bytes_total += t.total;
+            p.bytes_done += t.done.min(t.total.max(t.done));
+            match &t.outcome {
+                Some(Ok(())) => p.files_done += 1,
+                Some(Err(_)) => p.files_failed += 1,
+                None => {}
+            }
+        }
+        if let Some(b) = self.batches.iter().find(|b| b.id == batch) {
+            p.files_total += b.queued;
+        }
+        p
+    }
+
+    /// True while any transfer runs or waits.
+    pub fn busy(&self) -> bool {
+        self.running() > 0 || !self.queue.is_empty()
     }
 
     pub fn advance(&mut self, id: u64, done: u64) {
@@ -225,7 +372,18 @@ impl State {
 
     /// Drop finished rows, keeping anything still running.
     pub fn clear_finished(&mut self) {
-        self.transfers.retain(Transfer::running);
+        let done: Vec<u64> = self
+            .batches
+            .iter()
+            .filter(|b| {
+                let p = self.batch_progress(b.id);
+                b.queued == 0 && (p.finished() || b.error.is_some())
+            })
+            .map(|b| b.id)
+            .collect();
+        self.batches.retain(|b| !done.contains(&b.id));
+        self.transfers
+            .retain(|t| t.running() || t.batch.is_some_and(|b| !done.contains(&b)));
     }
 
     pub fn running(&self) -> usize {
@@ -268,6 +426,34 @@ pub fn remote_join(dir: &str, name: &str) -> String {
     } else {
         format!("{dir}{sep}{name}")
     }
+}
+
+/// A tree-relative path (`maps/old/b.pgm`, always `/`) as a local path.
+///
+/// Components only, never the string: a `..` from a robot must not climb out
+/// of the folder the operator chose to receive into.
+pub fn rel_to_local(base: &std::path::Path, rel: &str) -> PathBuf {
+    let mut out = base.to_path_buf();
+    for part in rel.split('/') {
+        if part.is_empty() || part == "." || part == ".." {
+            continue;
+        }
+        out.push(part);
+    }
+    out
+}
+
+/// A tree-relative path joined onto a robot directory, in the robot's own
+/// separator.
+pub fn remote_join_rel(base: &str, rel: &str) -> String {
+    let mut out = base.to_string();
+    for part in rel.split('/') {
+        if part.is_empty() || part == "." || part == ".." {
+            continue;
+        }
+        out = remote_join(&out, part);
+    }
+    out
 }
 
 /// The file-name part of a host path, for naming a download locally.
@@ -485,10 +671,77 @@ mod tests {
     }
 
     #[test]
+    fn relative_paths_cannot_climb_out_of_the_target() {
+        let base = std::path::Path::new("C:/dl");
+        assert_eq!(rel_to_local(base, "maps/old/b.pgm"), PathBuf::from("C:/dl/maps/old/b.pgm"));
+        assert_eq!(rel_to_local(base, "../../etc/passwd"), PathBuf::from("C:/dl/etc/passwd"));
+        assert_eq!(remote_join_rel("/home/t/in", "a/b.txt"), "/home/t/in/a/b.txt");
+        assert_eq!(remote_join_rel("/home/t/in", "../x"), "/home/t/in/x");
+    }
+
+    #[test]
+    fn a_folder_copy_starts_a_few_files_at_a_time() {
+        let mut state = State::default();
+        let batch = state.new_batch("maps".into(), Direction::FromRobot);
+        for i in 0..10 {
+            state.enqueue(Command::Download {
+                remote: format!("/r/{i}"),
+                local: PathBuf::from(format!("l/{i}")),
+                batch: Some(batch),
+            });
+        }
+        assert_eq!(state.queued(), 10);
+
+        // Only four may run at once.
+        let first = state.take_ready(4);
+        assert_eq!(first.len(), 4);
+        assert_eq!(state.queued(), 6);
+        for (n, cmd) in first.iter().enumerate() {
+            let Command::Download { batch, .. } = cmd else { panic!() };
+            state.begin(n as u64 + 100, format!("{n}"), Direction::FromRobot, 10, *batch);
+        }
+        // With four running, nothing more is released...
+        assert!(state.take_ready(4).is_empty());
+        // ...until one finishes.
+        state.finish(100, Ok(()));
+        assert_eq!(state.take_ready(4).len(), 1);
+
+        let p = state.batch_progress(batch);
+        assert_eq!(p.files_total, 10, "queued files must still count in the total");
+        assert_eq!(p.files_done, 1);
+        assert!(!p.finished());
+    }
+
+    #[test]
+    fn folder_setup_commands_are_not_throttled() {
+        // mkdirs are cheap and must run ahead of the files that need them.
+        let mut state = State::default();
+        for i in 0..6 {
+            state.enqueue(Command::MakeDirAll { path: format!("/r/d{i}") });
+        }
+        assert_eq!(state.take_ready(1).len(), 6);
+    }
+
+    #[test]
+    fn a_finished_batch_is_cleared_with_its_files() {
+        let mut state = State::default();
+        let batch = state.new_batch("maps".into(), Direction::ToRobot);
+        state.enqueue(Command::Upload { local: "a".into(), remote: "/r/a".into(), batch: Some(batch) });
+        let cmd = state.take_ready(4).remove(0);
+        let Command::Upload { batch: b, .. } = cmd else { panic!() };
+        state.begin(7, "a".into(), Direction::ToRobot, 3, b);
+        state.finish(7, Ok(()));
+        assert!(state.batch_progress(batch).finished());
+        state.clear_finished();
+        assert!(state.batches.is_empty());
+        assert!(state.transfers.is_empty());
+    }
+
+    #[test]
     fn a_finished_transfer_shows_a_full_bar() {
         let mut state = State::default();
         let id = state.next_id();
-        state.begin(id, "run3.bag".into(), Direction::FromRobot, 1000);
+        state.begin(id, "run3.bag".into(), Direction::FromRobot, 1000, None);
         state.advance(id, 993);
         state.finish(id, Ok(()));
         let t = &state.transfers[0];
@@ -509,7 +762,7 @@ mod tests {
     fn a_download_of_unknown_size_does_not_pretend() {
         let mut state = State::default();
         let id = state.next_id();
-        state.begin(id, "x".into(), Direction::FromRobot, 0);
+        state.begin(id, "x".into(), Direction::FromRobot, 0, None);
         assert_eq!(state.transfers[0].fraction(), None);
         state.set_total(id, 2048);
         state.advance(id, 512);
@@ -521,8 +774,8 @@ mod tests {
         let mut state = State::default();
         let a = state.next_id();
         let b = state.next_id();
-        state.begin(a, "done.bin".into(), Direction::ToRobot, 10);
-        state.begin(b, "busy.bin".into(), Direction::ToRobot, 10);
+        state.begin(a, "done.bin".into(), Direction::ToRobot, 10, None);
+        state.begin(b, "busy.bin".into(), Direction::ToRobot, 10, None);
         state.finish(a, Ok(()));
         state.clear_finished();
         assert_eq!(state.transfers.len(), 1);

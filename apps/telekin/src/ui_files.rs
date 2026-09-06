@@ -35,6 +35,7 @@ impl ViewerApp {
             self.reload_local();
         }
         self.ensure_remote_listed();
+        self.pump_transfers();
 
         // The editor takes the whole screen when it is open. Splitting the
         // window between an editor and two file lists would leave all three
@@ -302,6 +303,30 @@ impl ViewerApp {
         }
     }
 
+    /// Start queued transfers, a few at a time, and refresh both panes once
+    /// everything has landed so the copied files are simply there.
+    fn pump_transfers(&mut self) {
+        /// Transfers in flight at once. Enough to keep a WiFi link busy;
+        /// few enough that a robot's SD card is not asked for two hundred
+        /// files simultaneously.
+        const MAX_INFLIGHT: usize = 4;
+
+        let (ready, busy) = self
+            .with_files(|st| (st.take_ready(MAX_INFLIGHT), st.busy()))
+            .unwrap_or_default();
+        for cmd in ready {
+            self.send_file_command(cmd);
+        }
+
+        if self.transfers_were_busy && !busy {
+            self.reload_local();
+            if let Some(dir) = self.remote_dir() {
+                self.send_file_command(files::Command::List { path: dir });
+            }
+        }
+        self.transfers_were_busy = busy;
+    }
+
     /// Ask for the robot's home directory the first time the pane is opened.
     fn ensure_remote_listed(&mut self) {
         let needed = self
@@ -409,15 +434,14 @@ impl ViewerApp {
         };
         let local = self.local_dir.join(&name);
         if local.is_dir() {
-            self.with_files(|st| {
-                st.error = Some(format!(
-                    "{name} is a folder. Telekin copies files, one at a time."
-                ))
+            self.send_file_command(files::Command::UploadTree {
+                local,
+                remote_parent: remote_dir,
             });
             return;
         }
         let remote = files::remote_join(&remote_dir, &name);
-        self.send_file_command(files::Command::Upload { local, remote });
+        self.send_file_command(files::Command::Upload { local, remote, batch: None });
     }
 
     // -----------------------------------------------------------------------
@@ -582,22 +606,16 @@ impl ViewerApp {
         ) else {
             return;
         };
-        // A directory cannot be fetched as a file; the host would refuse, but
-        // saying so here saves a round trip and an error banner.
-        if listing
-            .entries
-            .iter()
-            .any(|e| e.name == name && e.is_dir)
-        {
-            self.with_files(|st| {
-                st.error =
-                    Some(format!("{name} is a folder. Open it and pick the files inside."))
+        let remote = files::remote_join(&listing.path, &name);
+        if listing.entries.iter().any(|e| e.name == name && e.is_dir) {
+            self.send_file_command(files::Command::DownloadTree {
+                remote,
+                local_parent: self.local_dir.clone(),
             });
             return;
         }
-        let remote = files::remote_join(&listing.path, &name);
         let local = self.local_dir.join(&name);
-        self.send_file_command(files::Command::Download { remote, local });
+        self.send_file_command(files::Command::Download { remote, local, batch: None });
     }
 
     fn remove_selected(&mut self) {
@@ -631,11 +649,14 @@ impl ViewerApp {
 
     fn transfer_list(&mut self, ui: &mut egui::Ui) {
         let (transfers, running) = self
-            .with_files(|st| (st.transfers.clone(), st.running()))
+            .with_files(|st| (st.transfers.clone(), st.running() + st.queued()))
             .unwrap_or_default();
 
         theme::section(ui, "Transfers");
-        if transfers.is_empty() {
+        let any_batches = self
+            .with_files(|st| !st.batches.is_empty())
+            .unwrap_or(false);
+        if transfers.is_empty() && !any_batches {
             ui.label(
                 RichText::new("Pick a file on either side, then press the arrow pointing where it should go.")
                     .size(12.0)
@@ -645,11 +666,23 @@ impl ViewerApp {
             return;
         }
 
+        let batches: Vec<(files::Batch, files::BatchProgress)> = self
+            .with_files(|st| {
+                st.batches
+                    .iter()
+                    .map(|b| (b.clone(), st.batch_progress(b.id)))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         egui::ScrollArea::vertical()
             .max_height(140.0)
             .auto_shrink([false, true])
             .show(ui, |ui| {
-                for t in &transfers {
+                for (b, p) in &batches {
+                    batch_row(ui, b, p);
+                }
+                for t in transfers.iter().filter(|t| t.batch.is_none()) {
                     transfer_row(ui, t);
                 }
             });
@@ -669,6 +702,60 @@ impl ViewerApp {
         });
         ui.add_space(8.0);
     }
+}
+
+/// A folder copy as one line: how many files have landed, and how far along
+/// the bytes are.
+fn batch_row(ui: &mut egui::Ui, b: &files::Batch, p: &files::BatchProgress) {
+    let arrow = match b.direction {
+        files::Direction::ToRobot => "→",
+        files::Direction::FromRobot => "←",
+    };
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.label(RichText::new(arrow).size(15.0).strong().color(theme::ACCENT));
+        theme::folder_icon(ui, 16.0);
+        ui.label(RichText::new(&b.name).size(13.0).color(theme::TEXT));
+        if b.truncated {
+            ui.label(RichText::new("(cut off at the robot's limit)").size(11.0).color(ui.visuals().warn_fg_color));
+        }
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if let Some(e) = &b.error {
+                ui.label(RichText::new(e.as_str()).size(12.0).color(ui.visuals().error_fg_color));
+                return;
+            }
+            let files = format!("{} / {} files", p.files_done, p.files_total);
+            if p.finished() && b.queued == 0 {
+                let colour = if p.files_failed == 0 { theme::GOOD } else { ui.visuals().error_fg_color };
+                let text = if p.files_failed == 0 {
+                    "100%".to_string()
+                } else {
+                    format!("{} failed", p.files_failed)
+                };
+                ui.label(RichText::new(text).monospace().size(13.0).strong().color(colour));
+                ui.label(RichText::new(files).monospace().size(11.0).color(theme::MUTED));
+                return;
+            }
+            let fraction = if p.bytes_total > 0 {
+                (p.bytes_done as f32 / p.bytes_total as f32).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            ui.label(
+                RichText::new(format!("{:>3.0}%", fraction * 100.0))
+                    .monospace()
+                    .size(13.0)
+                    .strong()
+                    .color(theme::ACCENT),
+            );
+            ui.add_sized(
+                [180.0, 10.0],
+                egui::ProgressBar::new(fraction).desired_height(10.0).fill(theme::ACCENT),
+            );
+            ui.label(RichText::new(files).monospace().size(11.0).color(theme::MUTED));
+        });
+    });
 }
 
 /// One line in the transfer list.

@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Protocol version. Bump on incompatible changes.
-pub const PROTO_VERSION: u16 = 7;
+pub const PROTO_VERSION: u16 = 8;
 
 /// Hard cap for a single control message (sanity bound, not a limit hit in practice).
 pub const MAX_CONTROL_MSG: u32 = 16 * 1024 * 1024;
@@ -238,11 +238,20 @@ pub enum FileOp {
     ReadText { path: String },
     /// Write an edited file back.
     WriteText { path: String, text: String },
+    /// Everything under a directory, flattened, so a whole folder can be
+    /// copied with one question rather than one listing per level.
+    Tree { path: String },
+    /// Create a directory and any missing parents; already existing is fine.
+    /// What a folder copy needs, as opposed to [`FileOp::MakeDir`], which is
+    /// a person's explicit "new folder" and should say so if it is taken.
+    MakeDirAll { path: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FileReply {
     Listing { id: u64, listing: DirListing },
+    /// The answer to [`FileOp::Tree`].
+    Tree { id: u64, tree: Tree },
     /// The contents of a file asked for with [`FileOp::ReadText`]. Carries the
     /// path back so a reply that arrives late cannot be shown against a file
     /// the operator has since moved on from.
@@ -274,6 +283,36 @@ pub struct DirEntry {
     /// A symlink. Followed for its metadata, but worth showing.
     pub is_link: bool,
 }
+
+/// A directory and everything beneath it.
+///
+/// Paths are relative to `root` and always use `/`, whatever the host's own
+/// separator is: the viewer splits them into components and joins with its
+/// own rules, so a tree from a Linux robot lands correctly on a Windows disk
+/// and the other way round.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Tree {
+    /// The directory that was asked for, absolute and cleaned up.
+    pub root: String,
+    /// Every directory below the root, parents before children.
+    pub dirs: Vec<String>,
+    /// Every regular file below the root, with its size.
+    pub files: Vec<TreeFile>,
+    /// True when the walk stopped at [`MAX_TREE_ENTRIES`]; what was listed is
+    /// real, but it is not everything.
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TreeFile {
+    pub rel: String,
+    pub len: u64,
+}
+
+/// Where a tree walk stops. A robot's home directory can hold a million
+/// files under `.cache`; nobody means to copy that, and a reply that size
+/// would stall the control stream that also carries keystrokes.
+pub const MAX_TREE_ENTRIES: usize = 20_000;
 
 /// Header at the start of a [`StreamKind::File`] stream, followed by the
 /// file's bytes until the stream ends.
