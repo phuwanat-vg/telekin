@@ -230,7 +230,8 @@ async fn serve(args: Args) -> anyhow::Result<()> {
     if !accounts.is_empty() {
         tracing::info!("{} Telekin account(s) also accepted", accounts.len());
     }
-    let (endpoint, fingerprint) = telekin_transport::server_endpoint(args.listen, &identity_dir)?;
+    let (endpoint, fingerprint) = telekin_transport::server_endpoint(args.listen, &identity_dir)
+        .map_err(|e| explain_bind(e, args.listen))?;
     tracing::info!("listening on {}", args.listen);
     tracing::info!("certificate fingerprint: {fingerprint}");
     tracing::info!("viewer command: telekin --host <this-address> --fingerprint {fingerprint}");
@@ -622,6 +623,23 @@ fn spawn_input_thread(mut rx: mpsc::UnboundedReceiver<InputCmd>) {
             }
         }
     });
+}
+
+/// Turn the one startup failure that actually happens on a robot into advice.
+///
+/// "Address already in use" is what an operator sees when a second copy is
+/// started while the systemd one is running — or the other way round — and
+/// on its own it says nothing about which. The service then restarts every
+/// three seconds forever, each attempt logging the same bare line.
+fn explain_bind(e: anyhow::Error, listen: impl std::fmt::Display) -> anyhow::Error {
+    let text = format!("{e:#}");
+    if text.contains("in use") || text.contains("os error 98") || text.contains("os error 10048") {
+        anyhow::anyhow!(
+            "cannot listen on {listen}: the port is already taken on this machine.              Another chassis is almost certainly running; `pgrep -a chassis` shows it.              If it is the systemd service, use `systemctl restart chassis@<user>`              instead of starting a second copy by hand."
+        )
+    } else {
+        e.context(format!("cannot listen on {listen}"))
+    }
 }
 
 /// The account this process runs as. Used as the advertised name, so the
