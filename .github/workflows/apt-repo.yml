@@ -1,16 +1,31 @@
 # Publishes the APT repository to GitHub Pages.
 #
-# Runs after every published release (the .debs come from the release's
-# assets, so nothing is rebuilt) and can be run by hand from the Actions tab.
+# Called by the release workflow once the release exists (the .debs come from
+# the release's assets, so nothing is rebuilt), and can be run by hand from
+# the Actions tab. It is *called*, not triggered by the release event: a
+# release created with the workflow's own GITHUB_TOKEN does not fire
+# `release: published` — GitHub suppresses that to stop workflows starting
+# each other forever — and the first attempt at this relied on it and
+# silently never ran.
+#
 # The signing key is the APT_SIGNING_KEY repository secret; its public half is
 # committed at packaging/apt/ and served alongside the packages.
 
 name: apt-repo
 
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag whose packages to publish (empty = newest)"
+        type: string
+        default: ""
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag whose packages to publish (empty = newest)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -32,8 +47,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p dist
-          # A release event names its tag; a manual run takes the newest.
-          gh release download ${{ github.event.release.tag_name }} --pattern '*.deb' --dir dist
+          # Empty means the newest release.
+          gh release download ${{ inputs.tag }} --pattern '*.deb' --dir dist
           ls -l dist
       - name: Build and sign the repository
         env:

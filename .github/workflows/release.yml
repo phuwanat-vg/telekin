@@ -16,6 +16,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   linux:
@@ -87,3 +89,13 @@ jobs:
             dist/*.dmg
             dist/latest.json
           generate_release_notes: true
+
+  # The apt repository, from the release just published. Chained here rather
+  # than triggered by the release event, which GITHUB_TOKEN-made releases do
+  # not fire.
+  apt:
+    needs: publish
+    uses: ./.github/workflows/apt-repo.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit
