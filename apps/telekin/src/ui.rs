@@ -477,29 +477,40 @@ impl ViewerApp {
                         .color(theme::MUTED),
                 );
             }
+            // The three resting states are the same clickable label: the
+            // check runs by itself at start, but a viewer left open for a
+            // week would never notice a release, so the version is also the
+            // "check again" control.
             Some(Outcome::UpToDate) => {
-                ui.label(
-                    egui::RichText::new(format!("v{CURRENT} · up to date"))
-                        .size(12.0)
-                        .color(theme::MUTED),
-                );
+                if recheck_label(ui, &format!("v{CURRENT} · up to date")) {
+                    self.start_update_check();
+                }
             }
             Some(Outcome::Unavailable(why)) => {
                 // Not an error banner: on a robot LAN with no internet this is
                 // the normal case, and the reason is one hover away.
-                ui.label(
-                    egui::RichText::new(format!("v{CURRENT}"))
-                        .size(12.0)
-                        .color(theme::MUTED),
-                )
-                .on_hover_text(format!("Could not check for updates: {why}"));
+                let clicked = ui
+                    .add(
+                        egui::Label::new(
+                            egui::RichText::new(format!("v{CURRENT}"))
+                                .size(12.0)
+                                .color(theme::MUTED),
+                        )
+                        .sense(egui::Sense::click()),
+                    )
+                    .on_hover_text(format!(
+                        "Could not check for updates: {why}
+Click to try again."
+                    ))
+                    .clicked();
+                if clicked {
+                    self.start_update_check();
+                }
             }
             None => {
-                ui.label(
-                    egui::RichText::new(format!("v{CURRENT}"))
-                        .size(12.0)
-                        .color(theme::MUTED),
-                );
+                if recheck_label(ui, &format!("v{CURRENT}")) {
+                    self.start_update_check();
+                }
             }
         }
     }
@@ -1568,6 +1579,20 @@ fn normalize(p: egui::Pos2, video: egui::Rect) -> (f32, f32) {
     )
 }
 
+
+/// The version label, clickable to run the update check again.
+fn recheck_label(ui: &mut egui::Ui, text: &str) -> bool {
+    let response = ui
+        .add(
+            egui::Label::new(egui::RichText::new(text).size(12.0).color(theme::MUTED))
+                .sense(egui::Sense::click()),
+        )
+        .on_hover_text("Click to check for a newer version now");
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    response.clicked()
+}
 
 /// Which columns a file row has room for, given its width.
 ///
