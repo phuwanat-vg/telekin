@@ -32,10 +32,10 @@ ureq.workspace = true
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
 
-# Only for taking the parent terminal back when a printing flag is used; the
-# GUI itself never touches it.
+# Taking the parent terminal back when a printing flag is used, and the one
+# call that lists drive letters for the file pane.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_Console"] }
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_Console", "Win32_Storage_FileSystem"] }
 
 # `cargo deb -p telekin` on Ubuntu. Runtime libraries come from
 # dpkg-shlibdeps; the GL and windowing libraries are loaded at run time rather

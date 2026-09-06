@@ -1814,6 +1814,49 @@ mod tests {
         );
     }
 
+    /// Above `C:\` the local pane lists the drives. The first version of the
+    /// panes stopped dead at the drive root, and the only way onto `D:` was
+    /// to know that the address box accepted a typed path.
+    #[cfg(windows)]
+    #[test]
+    fn the_local_pane_lists_drives_above_the_drive_root() {
+        let mut app = app_with(Vec::new());
+        app.mode = Mode::Files;
+        app.local_dir = std::path::PathBuf::new();
+        app.local = Some(crate::files::local_listing(&app.local_dir).expect("drive list"));
+
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx);
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1100.0, 800.0),
+            )),
+            ..Default::default()
+        };
+        let output = ctx.run_ui(input, |ui| app.files_screen(ui));
+
+        fn walk(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(t) => out.push(t.galley.text().to_owned()),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut text = Vec::new();
+        for clipped in &output.shapes {
+            walk(&clipped.shape, &mut text);
+        }
+        assert!(
+            text.iter().any(|t| t.eq_ignore_ascii_case("C:\\")),
+            "no drive row on screen: {text:?}"
+        );
+        assert!(
+            text.iter().any(|t| t.contains("Pick a drive")),
+            "the empty address box should say what to do: {text:?}"
+        );
+    }
+
     /// Text painted by the file panes, with positions, at a given size.
     fn file_pane_text(width: f32, height: f32) -> Vec<(egui::Pos2, String)> {
         let mut app = app_with(Vec::new());

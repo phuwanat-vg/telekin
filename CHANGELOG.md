@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Files view, Windows: the Up arrow from a drive root (`C:\`) now shows the
+  list of drives, so `D:` and a USB stick are a click away instead of a typed
+  path. The copy arrows are disabled while the drive list is showing.
+
 ## 1.0.2 — 2026-09-06
 
 - `telekin-robot-setup`, shipped with telekin-host and run only on request:

@@ -253,7 +253,10 @@ impl ViewerApp {
             // as the window is resized.
             ui.add_space((ui.available_height() * 0.30).max(60.0));
 
-            let can_send = self.local_pick.is_some() && self.remote_dir().is_some();
+            // Nothing crosses while the drive list is showing: a "file" there
+            // is a whole disk, and a download would have no folder to land in.
+            let at_drives = files::is_drive_list(&self.local_dir);
+            let can_send = self.local_pick.is_some() && self.remote_dir().is_some() && !at_drives;
             let send = ui
                 .add_enabled_ui(can_send, |ui| {
                     theme::arrow_button(
@@ -271,7 +274,7 @@ impl ViewerApp {
 
             ui.add_space(10.0);
 
-            let can_get = self.remote_pick.is_some();
+            let can_get = self.remote_pick.is_some() && !at_drives;
             let get = ui
                 .add_enabled_ui(can_get, |ui| {
                     theme::arrow_button(
@@ -370,7 +373,7 @@ impl ViewerApp {
                 .map(|l| l.path.clone())
                 .unwrap_or_else(|| self.local_dir.display().to_string());
             ui.horizontal(|ui| {
-                let up = self.local_dir.parent().map(|p| p.to_path_buf());
+                let up = files::local_up(&self.local_dir);
                 if ui
                     .add_enabled_ui(up.is_some(), |ui| {
                         theme::arrow_button(
@@ -393,6 +396,7 @@ impl ViewerApp {
                     [ui.available_width(), theme::CONTROL_HEIGHT],
                     egui::TextEdit::singleline(&mut typed)
                         .font(egui::TextStyle::Monospace)
+                        .hint_text("Pick a drive below, or type a path")
                         .vertical_align(egui::Align::Center),
                 );
                 if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {

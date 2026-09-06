@@ -472,6 +472,10 @@ pub fn remote_file_name(path: &str) -> &str {
 /// so it can be canonicalised, and the errors are about a disk the operator
 /// is sitting in front of.
 pub fn local_listing(path: &std::path::Path) -> anyhow::Result<DirListing> {
+    #[cfg(windows)]
+    if is_drive_list(path) {
+        return Ok(drive_listing());
+    }
     let dir = path
         .canonicalize()
         .unwrap_or_else(|_| path.to_path_buf());
@@ -520,6 +524,52 @@ fn display_path(path: &std::path::Path) -> String {
 /// What Windows puts in front of a canonicalised path: backslash, backslash,
 /// question mark, backslash.
 const VERBATIM_PREFIX: &str = r"\\?\";
+
+/// The place above every drive root on Windows: the empty path. The local
+/// pane lists the drives there, so the Up arrow from `C:\` has somewhere to
+/// go and a second disk is one click away instead of a path to be typed.
+/// Elsewhere `/` is the top and this is never true.
+pub fn is_drive_list(path: &std::path::Path) -> bool {
+    cfg!(windows) && path.as_os_str().is_empty()
+}
+
+/// Where the local Up arrow goes: the folder above, the drive list from a
+/// drive root on Windows, or nowhere.
+pub fn local_up(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    if is_drive_list(path) {
+        return None;
+    }
+    match path.parent() {
+        Some(parent) => Some(parent.to_path_buf()),
+        None if cfg!(windows) => Some(std::path::PathBuf::new()),
+        None => None,
+    }
+}
+
+/// Every drive letter Windows currently has mounted, as `C:\`, in the shape
+/// of a folder listing so the pane draws it like any other.
+#[cfg(windows)]
+fn drive_listing() -> DirListing {
+    use windows::Win32::Storage::FileSystem::GetLogicalDrives;
+    // A bitmask, bit 0 = A:. Asking the kernel rather than probing letters
+    // means an empty card reader does not stall the pane.
+    let mask = unsafe { GetLogicalDrives() };
+    let entries = (0u32..26)
+        .filter(|bit| mask & (1 << bit) != 0)
+        .map(|bit| telekin_proto::DirEntry {
+            name: format!("{}:\\", (b'A' + bit as u8) as char),
+            is_dir: true,
+            len: 0,
+            modified: None,
+            is_link: false,
+        })
+        .collect();
+    DirListing {
+        path: String::new(),
+        parent: None,
+        entries,
+    }
+}
 
 /// Where a file pane should open before anyone has navigated.
 pub fn local_start() -> std::path::PathBuf {
@@ -585,6 +635,47 @@ mod tests {
         assert!(!listing.path.starts_with(r"\?\"), "{}", listing.path);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_ordinary_folder_goes_up_to_its_parent() {
+        let dir = std::env::temp_dir().join("telekin-up-test");
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        assert_eq!(local_up(&dir), dir.parent().map(|p| p.to_path_buf()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn above_a_drive_root_sits_the_drive_list() {
+        let root = std::path::Path::new(r"C:\");
+        let up = local_up(root).expect("a drive root has somewhere to go up to");
+        assert!(is_drive_list(&up));
+        assert!(local_up(&up).is_none(), "the drive list is the top");
+
+        let listing = local_listing(&up).expect("drive list");
+        assert!(listing.parent.is_none());
+        assert!(!listing.entries.is_empty());
+        assert!(
+            listing.entries.iter().all(|e| e.is_dir && e.name.ends_with(":\\")),
+            "{:?}",
+            listing.entries.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+        assert!(listing.entries.iter().any(|e| e.name.eq_ignore_ascii_case("C:\\")));
+
+        // Picking a drive in the pane is a plain join onto the empty path,
+        // and lands on a listing of that drive.
+        let opened = up.join("C:\\");
+        assert!(!is_drive_list(&opened));
+        assert!(local_listing(&opened).is_ok());
+        assert!(is_drive_list(&local_up(&opened).expect("back up")));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn the_filesystem_root_is_the_top_elsewhere() {
+        assert!(local_up(std::path::Path::new("/")).is_none());
+        assert!(!is_drive_list(std::path::Path::new("")));
     }
 
     #[test]
