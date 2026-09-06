@@ -55,30 +55,24 @@ to be reconnected.
 
 A host advertises itself as **the account it runs as**, not as an arbitrary
 label — `--name` still overrides it, but the default is the username. That is
-the one string worth showing, because it is also what to sign in with: picking
-a robot from the scan results fills the username in, leaving only the password
-to type.
-
-The machine's hostname rides along in a TXT record and appears underneath, so
-two robots sharing an operator account are still distinguishable:
+its hostname, which is the one thing that differs between robots imaged from
+the same card. The account to sign in with rides along in a TXT record, so
+picking a robot from the scan results still fills the username in, leaving
+only the password to type. Results are keyed by certificate fingerprint, so
+even twenty robots with the same name appear as twenty rows:
 
 ```
-● tangox
-  tango-desktop · 192.168.200.105
+● tango-desktop
+  192.168.1.118 · 192.168.2.100
 ```
 
 ### Theme
 
-Dark blue, pinned rather than following the OS: a bright panel next to the
-video is glare, not a preference. Everything clickable is at least 34 px tall
-(egui's default is around 20), because this gets used one-handed next to a
-powered robot rather than at a desk. The stats panel draws each pipeline stage
-as a bar rather than a number — which stage dominates is the question being
-asked, and comparing two lengths is faster than comparing two figures.
-
-`telekin-codec` and `telekin-capture` expose traits (`VideoEncoder`, `VideoDecoder`,
-`ScreenCapture`), so a hardware encoder or a Wayland capture backend drops in
-without touching the transport or the apps.
+White and blue, with one black band across the top that separates Telekin's
+own controls from the robot's content. Type is a size up from a desktop
+application's default, because this is used standing beside a machine rather
+than at a desk. The remote screen keeps a dark surround so its colours are
+not thrown off by a bright frame.
 
 ## Install (v1.0.1)
 
@@ -96,10 +90,17 @@ echo "deb [signed-by=/usr/share/keyrings/telekin-archive-keyring.gpg] https://ph
 sudo apt update
 sudo apt install telekin-host
 
-# run it now and at every boot, as the robot's own account
-sudo systemctl enable --now chassis@tangox
-systemctl status chassis@tangox
+# run it now and at every boot, as the robot's own account.
+# `chassis@` is a template: the name after the @ is the account it runs as,
+# so on a robot whose account is `robot` this is `chassis@robot`. Logged in as
+# that account already? Then `$USER` fills it in for you.
+sudo systemctl enable --now chassis@$USER
+systemctl status chassis@$USER
 ```
+
+`apt install` prints this command with the robot's own account filled in. The
+account matters: the host serves *that* user's files and *that* user's
+desktop, and advertises it as the name to sign in with.
 
 Later versions arrive with the robot's normal `sudo apt upgrade`. The
 repository is signed; the key's fingerprint is in
@@ -113,7 +114,8 @@ account is signed in on the robot's desktop; with autologin that happens by
 itself after a reboot:
 
 ```bash
-sudo sed -i 's/^#\s*AutomaticLoginEnable.*/AutomaticLoginEnable=true/; s/^#\s*AutomaticLogin\s*=.*/AutomaticLogin=tangox/' /etc/gdm3/custom.conf
+# replace ROBOT_ACCOUNT with the account the robot signs in as
+sudo sed -i 's/^#\s*AutomaticLoginEnable.*/AutomaticLoginEnable=true/; s/^#\s*AutomaticLogin\s*=.*/AutomaticLogin=ROBOT_ACCOUNT/' /etc/gdm3/custom.conf
 ```
 
 Upgrading is the same `apt install` with the newer file. Removing:
@@ -160,10 +162,12 @@ cargo build --release
 
 ## Run
 
-On the robot, create an account once:
+On the robot, nothing to create: the host accepts the account it runs as, with
+that account's own password. A separate Telekin-only account is optional —
+useful when the operator should not know the robot's system password:
 
 ```bash
-chassis --add-user tangox
+chassis --add-user operator
 ```
 
 Then serve:
