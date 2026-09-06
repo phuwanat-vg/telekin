@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.1 — 2026-09-06
 
 - Files view: whole folders copy in either direction (empty folders and
   nesting preserved; symlinks skipped; a robot-side tree is capped at 20,000

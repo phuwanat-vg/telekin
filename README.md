@@ -80,7 +80,7 @@ asked, and comparing two lengths is faster than comparing two figures.
 `ScreenCapture`), so a hardware encoder or a Wayland capture backend drops in
 without touching the transport or the apps.
 
-## Install (v1.0.0)
+## Install (v1.0.1)
 
 Two packages: **chassis** goes on the robot, **telekin** goes on the computer
 you sit at. Everything is in the [releases](https://github.com/phuwanat-vg/telekin/releases).
@@ -106,7 +106,7 @@ repository is signed; the key's fingerprint is in
 [`packaging/apt/FINGERPRINT`](packaging/apt/FINGERPRINT).
 
 Without the repository — a machine with no route to GitHub — install the file
-directly: `sudo apt install ./telekin-host_1.0.0-1_arm64.deb` (or `_amd64`).
+directly: `sudo apt install ./telekin-host_1.0.1-1_arm64.deb` (or `_amd64`).
 
 The host serves files the moment it starts. The screen is available once that
 account is signed in on the robot's desktop; with autologin that happens by
@@ -124,9 +124,9 @@ for a reinstall).
 
 | Platform | File | Notes |
 |---|---|---|
-| Windows 10/11 | `telekin-1.0.0-windows-x64-setup.exe` | Installs per-user by default (no admin needed). Running a newer setup upgrades in place. |
-| Ubuntu x86-64 / ARM64 | `telekin_1.0.0-1_{amd64,arm64}.deb` | With the repository above: `sudo apt install telekin`. Adds a launcher entry. |
-| macOS 11+ | `telekin-1.0.0-macos.dmg` | Drag to Applications. Unsigned: right-click → Open the first time. |
+| Windows 10/11 | `telekin-1.0.1-windows-x64-setup.exe` | Installs per-user by default (no admin needed). Running a newer setup upgrades in place. |
+| Ubuntu x86-64 / ARM64 | `telekin_1.0.1-1_{amd64,arm64}.deb` | With the repository above: `sudo apt install telekin`. Adds a launcher entry. |
+| macOS 11+ | `telekin-1.0.1-macos.dmg` | Drag to Applications. Unsigned: right-click → Open the first time. |
 
 The viewer checks for a newer version when it starts (one HTTPS request for
 `latest.json`; nothing is installed automatically) and shows an **Update to
@@ -141,7 +141,7 @@ the result and exits, for scripts.
 packaging/build-deb.sh              # on Ubuntu; makes the .debs for that machine's architecture
 powershell -File packaging/build-windows.ps1   # on Windows; needs Inno Setup 6
 packaging/macos/build.sh            # on macOS
-python3 packaging/make-manifest.py --version 1.0.0 --base https://.../v1.0.0
+python3 packaging/make-manifest.py --version 1.0.1 --base https://.../v1.0.1
 ```
 
 Pushing a `v*` tag runs all of these on GitHub Actions and publishes a release
