@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.3 — 2026-09-06
 
 - Files view, Windows: the Up arrow from a drive root (`C:\`) now shows the
   list of drives, so `D:` and a USB stick are a click away instead of a typed
