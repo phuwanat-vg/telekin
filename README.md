@@ -27,7 +27,7 @@ you sit at. Everything is on the [releases page](https://github.com/phuwanat-vg/
 Add the repository once, then it installs and upgrades like any other package:
 
 ```bash
-curl -fsSL https://phuwanat-vg.github.io/telekin/telekin-archive-keyring.gpg | sudo tee /usr/share/keyrings/telekin-archive-keyring.gpg >/dev/null
+curl -fsSL https://phuwanat-vg.github.io/telekin/telekin-archive-keyring.gpg -o /tmp/telekin-archive-keyring.gpg && sudo install -m 644 /tmp/telekin-archive-keyring.gpg /usr/share/keyrings/
 echo "deb [signed-by=/usr/share/keyrings/telekin-archive-keyring.gpg] https://phuwanat-vg.github.io/telekin stable main" | sudo tee /etc/apt/sources.list.d/telekin.list
 sudo apt update
 sudo apt install telekin-host
@@ -38,6 +38,10 @@ Then run it now and at every boot, as the robot's own account:
 ```bash
 sudo systemctl enable --now chassis@$USER
 ```
+
+If `apt update` says `NO_PUBKEY CF0138FADD7A535D`, the keyring file did not
+land: run the first line again and check that
+`/usr/share/keyrings/telekin-archive-keyring.gpg` is about 1.2 kB.
 
 `chassis@` is a template: the part after `@` is the account it runs as. That
 account is whose files you will see, whose desktop is captured, and the
