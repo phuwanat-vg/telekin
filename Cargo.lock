@@ -3077,7 +3077,7 @@ dependencies = [
 
 [[package]]
 name = "telekin"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -3098,7 +3098,7 @@ dependencies = [
 
 [[package]]
 name = "telekin-capture"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "libc",
@@ -3110,7 +3110,7 @@ dependencies = [
 
 [[package]]
 name = "telekin-codec"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "openh264",
@@ -3120,7 +3120,7 @@ dependencies = [
 
 [[package]]
 name = "telekin-host"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "argon2",
@@ -3141,7 +3141,7 @@ dependencies = [
 
 [[package]]
 name = "telekin-input"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "telekin-proto",
@@ -3152,7 +3152,7 @@ dependencies = [
 
 [[package]]
 name = "telekin-proto"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "postcard",
@@ -3162,7 +3162,7 @@ dependencies = [
 
 [[package]]
 name = "telekin-transport"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "mdns-sd",

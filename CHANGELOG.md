@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.2 — 2026-09-06
+
+- `telekin-robot-setup`, shipped with telekin-host and run only on request:
+  `x11` (Xorg instead of Wayland in GDM), `autologin USER`, `firewall`
+  (ufw 9631/udp), `service USER`, `all USER`, and `check`. Idempotent; keeps a
+  backup of GDM's custom.conf.
+- The host explains a port clash ("another chassis is running") instead of
+  printing only "Address already in use".
+- Robot-side diagnostic scripts kept under `tools/`.
+
 ## 1.0.1 — 2026-09-06
 
 - Files view: whole folders copy in either direction (empty folders and

@@ -44,30 +44,32 @@ account is whose files you will see, whose desktop is captured, and the
 username the viewer fills in for you. `apt install` prints this command with
 the account already filled in.
 
-The host serves files the moment it starts. The screen becomes available once
-that account is signed in on the robot's desktop. Robots without a monitor or
-a person at the keyboard want autologin, so a reboot comes back by itself:
+The host serves files the moment it starts. The screen needs that account
+signed in on an **X11** desktop, and robots with no one at the keyboard want
+**autologin** so a reboot comes back by itself. Both, plus the UDP firewall
+rule (QUIC is UDP), are one command — shipped with the package, run only when
+you choose to, safe to run twice:
 
 ```bash
-sudo sed -i 's/^#\s*AutomaticLoginEnable.*/AutomaticLoginEnable=true/; s/^#\s*AutomaticLogin\s*=.*/AutomaticLogin=ROBOT_ACCOUNT/' /etc/gdm3/custom.conf
+sudo telekin-robot-setup check          # what is set now; changes nothing
+sudo telekin-robot-setup all $USER      # Xorg instead of Wayland, autologin, ufw 9631/udp, enable the service
+sudo reboot
 ```
 
-Two more things that stop people on a fresh robot:
-
-- **The session must be X11.** Ubuntu's desktop defaults to Wayland; set
-  `WaylandEnable=false` in `/etc/gdm3/custom.conf` and reboot.
-- **QUIC is UDP.** `sudo ufw allow 9631/udp`, not tcp.
+Each step is also available on its own (`x11`, `autologin USER`, `firewall`,
+`service USER`). It edits GDM's `custom.conf` and keeps a `.telekin-bak`
+beside it.
 
 Without internet on the robot, install the `.deb` from the releases page
-directly: `sudo apt install ./telekin-host_1.0.1-1_arm64.deb`.
+directly: `sudo apt install ./telekin-host_1.0.2-1_arm64.deb`.
 
 ### Computer
 
 | Platform | Install | Upgrade |
 |---|---|---|
-| Windows 10/11 | `telekin-1.0.1-windows-x64-setup.exe` — per-user, no admin needed | run the newer setup; it replaces in place |
+| Windows 10/11 | `telekin-1.0.2-windows-x64-setup.exe` — per-user, no admin needed | run the newer setup; it replaces in place |
 | Ubuntu | same repository as above, then `sudo apt install telekin` | `sudo apt upgrade` |
-| macOS 11+ | `telekin-1.0.1-macos.dmg`, drag to Applications. Unsigned: right-click → Open the first time | drag the new one over |
+| macOS 11+ | `telekin-1.0.2-macos.dmg`, drag to Applications. Unsigned: right-click → Open the first time | drag the new one over |
 
 The viewer checks for a newer version at start and shows an **Update to
 x.y.z** button in the corner of the first screen when there is one. Nothing is

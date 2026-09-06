@@ -29,8 +29,13 @@ Then check it is up:
     systemctl status chassis@${guess}
 
 The host serves files as soon as it starts. The screen becomes available once
-that account is signed in on the robot's desktop (autologin makes this happen
-by itself after a reboot).
+that account is signed in on the robot's desktop.
+
+The rest of a robot's one-time setup — Xorg instead of Wayland, autologin,
+the UDP firewall rule — is one command, run only when you choose to:
+
+    sudo telekin-robot-setup check          # see what is set, change nothing
+    sudo telekin-robot-setup all ${guess}     # x11 + autologin + firewall + service
 
 EOF
         ;;

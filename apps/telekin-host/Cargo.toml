@@ -55,5 +55,6 @@ maintainer-scripts = "../../packaging/linux/debian"
 assets = [
     ["target/release/chassis", "usr/bin/", "755"],
     ["../../packaging/linux/chassis@.service", "lib/systemd/system/", "644"],
+    ["../../packaging/linux/telekin-robot-setup", "usr/bin/", "755"],
     ["../../README.md", "usr/share/doc/telekin-host/README.md", "644"],
 ]

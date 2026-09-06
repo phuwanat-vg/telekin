@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# telekin-robot-setup — the one-time root-only preparation a robot needs.
+#
+# Installed by the telekin-host package, run only when asked. Nothing here
+# happens on its own at install time: every step below changes system
+# configuration, and which of them a given robot wants is the operator's
+# call. Each step is safe to run twice.
+#
+#   sudo telekin-robot-setup check              show what is set, change nothing
+#   sudo telekin-robot-setup x11                make the login screen use Xorg, not Wayland
+#   sudo telekin-robot-setup autologin USER     sign USER in at boot, so the screen is there after a reboot
+#   sudo telekin-robot-setup firewall           allow UDP 9631 through ufw, if ufw is on
+#   sudo telekin-robot-setup service USER       enable and start chassis@USER now and at boot
+#   sudo telekin-robot-setup all USER           x11 + autologin USER + firewall + service USER
+#
+# x11 and autologin edit GDM's custom.conf. The first edit keeps a copy beside
+# it as custom.conf.telekin-bak. A reboot applies x11; autologin applies at
+# the next boot too.
+set -euo pipefail
+
+PORT=9631
+CONF="${TELEKIN_GDM_CONF:-}"
+if [ -z "$CONF" ]; then
+    for c in /etc/gdm3/custom.conf /etc/gdm/custom.conf; do
+        [ -f "$c" ] && CONF="$c" && break
+    done
+fi
+
+usage() {
+    sed -n '2,/^set -euo/p' "$0" | grep -E '^#( |$)' | sed 's/^# \{0,1\}//' | sed '1d'
+}
+
+die() { echo "telekin-robot-setup: $*" >&2; exit 1; }
+
+need_root() {
+    [ "$(id -u)" -eq 0 ] || die "this step changes system files; run it with sudo"
+}
+
+need_conf() {
+    [ -n "$CONF" ] && [ -f "$CONF" ] \
+        || die "no GDM configuration found (/etc/gdm3/custom.conf). Is this an Ubuntu desktop with GDM? Other display managers are not handled here."
+}
+
+need_user() {
+    [ -n "${1:-}" ] || die "which account? e.g. 'sudo telekin-robot-setup $2 tangox'"
+    getent passwd "$1" >/dev/null || die "no such account: $1"
+}
+
+backup_conf() {
+    [ -f "$CONF.telekin-bak" ] || cp -p "$CONF" "$CONF.telekin-bak"
+}
+
+# Set KEY=VALUE in the [daemon] section, replacing any existing line for the
+# key whether it was live or commented out — GDM ships them commented, as
+# "#WaylandEnable=false" and "#  AutomaticLogin = user1".
+set_daemon_key() {
+    local key="$1" value="$2"
+    backup_conf
+    sed -i -E "/^[#[:space:]]*${key}[[:space:]]*=/d" "$CONF"
+    if grep -q '^\[daemon\]' "$CONF"; then
+        sed -i "/^\[daemon\]/a ${key}=${value}" "$CONF"
+    else
+        printf '\n[daemon]\n%s=%s\n' "$key" "$value" >> "$CONF"
+    fi
+}
+
+daemon_key() {
+    # The live (uncommented) value of a key, or "(not set)".
+    local v
+    v="$(grep -E "^[[:space:]]*$1[[:space:]]*=" "$CONF" 2>/dev/null | tail -1 | sed -E 's/^[^=]*=[[:space:]]*//')"
+    echo "${v:-(not set)}"
+}
+
+do_x11() {
+    need_root; need_conf
+    set_daemon_key WaylandEnable false
+    echo "x11: WaylandEnable=false written to $CONF"
+    echo "     takes effect at the next reboot (or sign out and back in)"
+}
+
+do_autologin() {
+    need_root; need_conf; need_user "${1:-}" autologin
+    set_daemon_key AutomaticLoginEnable true
+    set_daemon_key AutomaticLogin "$1"
+    echo "autologin: $1 will be signed in automatically from the next boot"
+}
+
+do_firewall() {
+    need_root
+    if ! command -v ufw >/dev/null; then
+        echo "firewall: ufw is not installed; nothing to open"
+        return
+    fi
+    if ! ufw status 2>/dev/null | grep -q '^Status: active'; then
+        echo "firewall: ufw is inactive; nothing is blocking UDP $PORT"
+        return
+    fi
+    ufw allow "$PORT/udp" >/dev/null
+    echo "firewall: UDP $PORT allowed through ufw (Telekin is QUIC, so UDP — not TCP)"
+}
+
+do_service() {
+    need_root; need_user "${1:-}" service
+    systemctl enable --now "chassis@$1" >/dev/null
+    sleep 1
+    if systemctl is-active --quiet "chassis@$1"; then
+        echo "service: chassis@$1 is running and enabled at boot"
+    else
+        echo "service: chassis@$1 did not stay up — see: journalctl -u chassis@$1 -n 20" >&2
+        exit 1
+    fi
+}
+
+do_check() {
+    echo "GDM config:      ${CONF:-(none found)}"
+    if [ -n "$CONF" ] && [ -f "$CONF" ]; then
+        echo "WaylandEnable:   $(daemon_key WaylandEnable)   (Telekin captures X11; wants 'false')"
+        echo "AutomaticLogin:  $(daemon_key AutomaticLogin) / enabled: $(daemon_key AutomaticLoginEnable)"
+    fi
+    # The session type of whoever is on the console right now, if anyone.
+    local sess type
+    sess="$(loginctl list-sessions --no-legend 2>/dev/null | awk '$4=="seat0"{print $1; exit}')"
+    if [ -n "$sess" ]; then
+        type="$(loginctl show-session "$sess" -p Type --value 2>/dev/null)"
+        echo "console session: $type   (Telekin needs x11)"
+    else
+        echo "console session: nobody is signed in on the console"
+    fi
+    if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
+        if ufw status | grep -qE "^$PORT/udp"; then
+            echo "firewall:        ufw active, UDP $PORT allowed"
+        else
+            echo "firewall:        ufw active, UDP $PORT NOT allowed — run: sudo telekin-robot-setup firewall"
+        fi
+    else
+        echo "firewall:        ufw off or absent; UDP $PORT is reachable"
+    fi
+    local units
+    units="$(systemctl list-units --all --plain --no-legend 'chassis@*.service' 2>/dev/null | awk '{print $1" "$4}')"
+    if [ -n "$units" ]; then
+        echo "service:         $units"
+    else
+        echo "service:         no chassis@ instance enabled — run: sudo telekin-robot-setup service <user>"
+    fi
+}
+
+cmd="${1:-}"
+case "$cmd" in
+    check)     do_check ;;
+    x11)       do_x11 ;;
+    autologin) do_autologin "${2:-}" ;;
+    firewall)  do_firewall ;;
+    service)   do_service "${2:-}" ;;
+    all)
+        need_user "${2:-}" all
+        do_x11
+        do_autologin "$2"
+        do_firewall
+        do_service "$2"
+        echo
+        echo "done. Reboot to apply the X11 and autologin changes:  sudo reboot"
+        ;;
+    ""|-h|--help|help) usage ;;
+    *) die "unknown command '$cmd' (try: check, x11, autologin, firewall, service, all)" ;;
+esac

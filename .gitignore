@@ -4,3 +4,8 @@
 /view.err.log
 *.telekin-part
 /repo
+
+# never commit machine identities or backups
+/pi-*backup*/
+*.der
+/*-backup-*/
