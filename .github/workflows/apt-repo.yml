@@ -1,0 +1,54 @@
+# Publishes the APT repository to GitHub Pages.
+#
+# Runs after every published release (the .debs come from the release's
+# assets, so nothing is rebuilt) and can be run by hand from the Actions tab.
+# The signing key is the APT_SIGNING_KEY repository secret; its public half is
+# committed at packaging/apt/ and served alongside the packages.
+
+name: apt-repo
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends dpkg-dev apt-utils gnupg
+      - name: Fetch the release's packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          # A release event names its tag; a manual run takes the newest.
+          gh release download ${{ github.event.release.tag_name }} --pattern '*.deb' --dir dist
+          ls -l dist
+      - name: Build and sign the repository
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+        run: bash packaging/apt/build-repo.sh
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: repo
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

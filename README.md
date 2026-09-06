@@ -87,14 +87,26 @@ you sit at. Everything is in the [releases](https://github.com/phuwanat-vg/telek
 
 ### Robot — Ubuntu 22.04/24.04, ARM64 (Pi 5, Jetson) or x86-64
 
+Add the Telekin repository once, then install and upgrade like any other
+package:
+
 ```bash
-# pick the file for the robot's architecture: arm64 or amd64
-sudo apt install ./telekin-host_1.0.0-1_arm64.deb
+curl -fsSL https://phuwanat-vg.github.io/telekin/telekin-archive-keyring.gpg | sudo tee /usr/share/keyrings/telekin-archive-keyring.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/telekin-archive-keyring.gpg] https://phuwanat-vg.github.io/telekin stable main" | sudo tee /etc/apt/sources.list.d/telekin.list
+sudo apt update
+sudo apt install telekin-host
 
 # run it now and at every boot, as the robot's own account
 sudo systemctl enable --now chassis@tangox
 systemctl status chassis@tangox
 ```
+
+Later versions arrive with the robot's normal `sudo apt upgrade`. The
+repository is signed; the key's fingerprint is in
+[`packaging/apt/FINGERPRINT`](packaging/apt/FINGERPRINT).
+
+Without the repository — a machine with no route to GitHub — install the file
+directly: `sudo apt install ./telekin-host_1.0.0-1_arm64.deb` (or `_amd64`).
 
 The host serves files the moment it starts. The screen is available once that
 account is signed in on the robot's desktop; with autologin that happens by
@@ -113,8 +125,7 @@ for a reinstall).
 | Platform | File | Notes |
 |---|---|---|
 | Windows 10/11 | `telekin-1.0.0-windows-x64-setup.exe` | Installs per-user by default (no admin needed). Running a newer setup upgrades in place. |
-| Ubuntu x86-64 | `telekin_1.0.0-1_amd64.deb` | `sudo apt install ./telekin_1.0.0-1_amd64.deb` — adds a launcher entry. |
-| Ubuntu ARM64 | `telekin_1.0.0-1_arm64.deb` | same |
+| Ubuntu x86-64 / ARM64 | `telekin_1.0.0-1_{amd64,arm64}.deb` | With the repository above: `sudo apt install telekin`. Adds a launcher entry. |
 | macOS 11+ | `telekin-1.0.0-macos.dmg` | Drag to Applications. Unsigned: right-click → Open the first time. |
 
 The viewer checks for a newer version when it starts (one HTTPS request for
