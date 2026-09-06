@@ -1,0 +1,59 @@
+[package]
+name = "telekin-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Telekin host (chassis): serves a robot's screen and files over QUIC"
+
+# The package keeps the family prefix so the workspace reads as one project;
+# the binary is named for the robot's body, because `chassis` is what someone
+# types on the robot itself.
+[[bin]]
+name = "chassis"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+telekin-proto.workspace = true
+telekin-transport.workspace = true
+telekin-codec.workspace = true
+telekin-capture.workspace = true
+telekin-input.workspace = true
+
+argon2.workspace = true
+rpassword.workspace = true
+serde.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+# `cargo deb -p telekin-host` on Ubuntu, for ARM64 and x86-64 alike. Ships the
+# systemd unit; the postinst prints how to enable it for the robot's account.
+[package.metadata.deb]
+name = "telekin-host"
+section = "net"
+priority = "optional"
+depends = "$auto"
+recommends = "xserver-xorg"
+extended-description = """\
+The robot side of Telekin. Runs as the robot's own account, advertises itself
+on the LAN, and serves the desktop (when one is signed in) and the filesystem
+to a Telekin viewer. Idle cost is zero: nothing is captured or encoded until a
+viewer asks for video."""
+maintainer-scripts = "../../packaging/linux/debian"
+assets = [
+    ["target/release/chassis", "usr/bin/", "755"],
+    ["../../packaging/linux/chassis@.service", "lib/systemd/system/", "644"],
+    ["../../README.md", "usr/share/doc/telekin-host/README.md", "644"],
+]

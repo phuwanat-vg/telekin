@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Telekin
+GenericName=Robot Remote Desktop
+Comment=Remote desktop and file transfer for robots over QUIC
+Exec=telekin
+Icon=telekin
+Terminal=false
+Categories=Network;RemoteAccess;
+Keywords=robot;remote;desktop;ros;files;
+StartupNotify=true

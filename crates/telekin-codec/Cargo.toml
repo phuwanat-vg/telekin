@@ -1,0 +1,12 @@
+[package]
+name = "telekin-codec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+openh264.workspace = true
+# Needed for the slice-threading configuration the safe wrapper does not expose.
+openh264-sys2 = "0.6"
+tracing.workspace = true

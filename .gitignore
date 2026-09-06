@@ -1,0 +1,5 @@
+/target
+/dist
+/view.log
+/view.err.log
+*.telekin-part

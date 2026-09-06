@@ -1,0 +1,39 @@
+#!/bin/sh
+# Runs after `apt install telekin-host`.
+#
+# Does not enable the service: it is a template that runs as one account, and
+# guessing which account a robot uses is not this script's call. It prints the
+# one command instead, with the most likely account filled in.
+set -e
+
+case "$1" in
+    configure)
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+
+        # The first ordinary account is almost always the robot's.
+        guess=$(getent passwd 1000 | cut -d: -f1 || true)
+        [ -n "$guess" ] || guess="<user>"
+
+        cat <<EOF
+
+Telekin host installed.
+
+To start it now and at every boot, as the robot's account:
+
+    sudo systemctl enable --now chassis@${guess}
+
+Then check it is up:
+
+    systemctl status chassis@${guess}
+
+The host serves files as soon as it starts. The screen becomes available once
+that account is signed in on the robot's desktop (autologin makes this happen
+by itself after a reboot).
+
+EOF
+        ;;
+esac
+
+exit 0

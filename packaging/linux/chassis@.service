@@ -1,0 +1,32 @@
+# Telekin host, as a system service that runs as one robot account.
+#
+# Instantiated per user:  sudo systemctl enable --now chassis@tangox
+#
+# A *system* unit rather than a user unit on purpose. A user unit only exists
+# while that user has a session, which on a robot means "after someone signs
+# in on the console" — and nobody does. This starts at boot, serves files
+# immediately, and picks up the desktop by itself once the account signs in
+# (or autologin does it), because the host looks for the display per session
+# rather than once at start.
+
+[Unit]
+Description=Telekin host (chassis) for %i
+Documentation=https://github.com/phuwanat-vg/telekin
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+# Relative paths and `~` in the file panes resolve against the account's home.
+WorkingDirectory=~
+Environment=RUST_LOG=chassis=info,telekin_capture=info
+ExecStart=/usr/bin/chassis
+Restart=on-failure
+RestartSec=3
+# Deliberately not sandboxed with ProtectHome / PrivateTmp: the service's
+# whole job is this user's files, this user's X cookie in /run/user, and the
+# X socket in /tmp.
+
+[Install]
+WantedBy=multi-user.target

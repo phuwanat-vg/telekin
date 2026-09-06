@@ -1,0 +1,14 @@
+[package]
+name = "telekin-transport"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+quinn.workspace = true
+rustls.workspace = true
+rcgen.workspace = true
+sha2.workspace = true
+mdns-sd.workspace = true
+tracing.workspace = true

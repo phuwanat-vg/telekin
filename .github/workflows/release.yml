@@ -1,0 +1,89 @@
+# Builds every installer and publishes a GitHub Release when a version tag is
+# pushed:
+#
+#     git tag v1.0.0 && git push origin v1.0.0
+#
+# One job per platform, each on its own native runner — including a real
+# ARM64 Ubuntu runner for the robot package, so nothing is cross-compiled.
+# The last job gathers the artifacts, writes latest.json (what the viewer's
+# update check reads) and attaches everything to the release.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-deb --locked
+      - run: packaging/build-deb.sh all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/*.deb
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: winget install --id JRSoftware.InnoSetup --silent --accept-package-agreements --accept-source-agreements
+        shell: pwsh
+      - run: powershell -File packaging/build-windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*.exe
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - run: packaging/macos/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*.dmg
+
+  publish:
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Write latest.json
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          python3 packaging/make-manifest.py \
+            --version "$version" \
+            --base "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}" \
+            --page "https://github.com/${GITHUB_REPOSITORY}/releases/latest"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.deb
+            dist/*.exe
+            dist/*.dmg
+            dist/latest.json
+          generate_release_notes: true

@@ -1,0 +1,19 @@
+#!/bin/sh
+# Runs before `apt remove telekin-host`.
+#
+# Stops every running instance so the binary is not deleted out from under a
+# live session. Instances stay *enabled*, so a reinstall brings them back
+# without anyone having to remember which accounts had it.
+set -e
+
+case "$1" in
+    remove|upgrade|deconfigure)
+        if command -v systemctl >/dev/null 2>&1; then
+            for unit in $(systemctl list-units --plain --no-legend 'chassis@*.service' 2>/dev/null | awk '{print $1}'); do
+                systemctl stop "$unit" >/dev/null 2>&1 || true
+            done
+        fi
+        ;;
+esac
+
+exit 0

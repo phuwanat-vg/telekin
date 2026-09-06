@@ -1,0 +1,61 @@
+[package]
+name = "telekin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Telekin viewer: remote desktop and file transfer for robots over QUIC"
+build = "build.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+telekin-proto.workspace = true
+telekin-transport.workspace = true
+telekin-codec.workspace = true
+
+eframe.workspace = true
+egui.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+ureq.workspace = true
+
+# Embeds the icon and version block into the .exe, so it looks right in
+# Explorer and the taskbar before the app has even started.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+# Only for taking the parent terminal back when a printing flag is used; the
+# GUI itself never touches it.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_Console"] }
+
+# `cargo deb -p telekin` on Ubuntu. Runtime libraries come from
+# dpkg-shlibdeps; the GL and windowing libraries are loaded at run time rather
+# than linked, so they are listed by hand.
+[package.metadata.deb]
+name = "telekin"
+section = "utils"
+priority = "optional"
+depends = "$auto, libgl1, libegl1, libxkbcommon0, libx11-6, libxcursor1, libxi6, libxrandr2, libwayland-client0"
+extended-description = """\
+The operator side of Telekin: connects to a robot running the chassis host,
+shows its screen with low latency over QUIC, and moves and edits files on it
+without starting a video stream."""
+assets = [
+    ["target/release/telekin", "usr/bin/", "755"],
+    ["../../packaging/linux/telekin.desktop", "usr/share/applications/", "644"],
+    ["../../packaging/icons/telekin-256.png", "usr/share/icons/hicolor/256x256/apps/telekin.png", "644"],
+    ["../../packaging/icons/telekin-128.png", "usr/share/icons/hicolor/128x128/apps/telekin.png", "644"],
+    ["../../packaging/icons/telekin-64.png", "usr/share/icons/hicolor/64x64/apps/telekin.png", "644"],
+    ["../../packaging/icons/telekin-48.png", "usr/share/icons/hicolor/48x48/apps/telekin.png", "644"],
+    ["../../packaging/icons/telekin-32.png", "usr/share/icons/hicolor/32x32/apps/telekin.png", "644"],
+    ["../../README.md", "usr/share/doc/telekin/README.md", "644"],
+]

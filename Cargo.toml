@@ -1,0 +1,65 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/telekin-proto",
+    "crates/telekin-transport",
+    "crates/telekin-codec",
+    "crates/telekin-capture",
+    "crates/telekin-input",
+    "apps/telekin-host",
+    "apps/telekin",
+]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+authors = ["Phuwanat, IRiSH LAB <kaikangofusan@gmail.com>"]
+repository = "https://github.com/phuwanat-vg/telekin"
+homepage = "https://github.com/phuwanat-vg/telekin"
+
+[workspace.dependencies]
+telekin-proto = { path = "crates/telekin-proto" }
+telekin-transport = { path = "crates/telekin-transport" }
+telekin-codec = { path = "crates/telekin-codec" }
+telekin-capture = { path = "crates/telekin-capture" }
+telekin-input = { path = "crates/telekin-input" }
+
+anyhow = "1"
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["alloc", "use-std"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive", "env"] }
+
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring", "log"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rcgen = "0.13"
+sha2 = "0.10"
+argon2 = "0.6"
+rpassword = "7"
+mdns-sd = "0.11"
+
+openh264 = "0.6"
+
+# The viewer is a real GUI: connection form, discovery list, live settings.
+eframe = { version = "0.36", default-features = false, features = ["glow", "wayland", "x11"] }
+egui = "0.36"
+
+# The viewer's update check: one small HTTPS GET of a JSON manifest. rustls,
+# so it shares no system TLS state and behaves the same on every platform.
+ureq = { version = "2", default-features = false, features = ["tls"] }
+serde_json = "1"
+
+# Fast frames need release-grade codegen even while iterating.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
