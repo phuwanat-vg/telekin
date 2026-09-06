@@ -634,9 +634,12 @@ fn spawn_input_thread(mut rx: mpsc::UnboundedReceiver<InputCmd>) {
 fn explain_bind(e: anyhow::Error, listen: impl std::fmt::Display) -> anyhow::Error {
     let text = format!("{e:#}");
     if text.contains("in use") || text.contains("os error 98") || text.contains("os error 10048") {
-        anyhow::anyhow!(
-            "cannot listen on {listen}: the port is already taken on this machine.              Another chassis is almost certainly running; `pgrep -a chassis` shows it.              If it is the systemd service, use `systemctl restart chassis@<user>`              instead of starting a second copy by hand."
-        )
+        anyhow::anyhow!(concat!(
+            "cannot listen on {listen}: the port is already taken on this machine. ",
+            "Another chassis is almost certainly running; `pgrep -a chassis` shows it. ",
+            "If it is the systemd service, use `systemctl restart chassis@<user>` ",
+            "instead of starting a second copy by hand."
+        ))
     } else {
         e.context(format!("cannot listen on {listen}"))
     }
