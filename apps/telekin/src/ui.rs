@@ -1479,17 +1479,17 @@ impl ViewerApp {
                     // F11 toggles immersive mode, so it is the viewer's key
                     // rather than the robot's. Everything else goes through.
                     egui::Event::Key { key: egui::Key::F11, .. } => {}
-                    egui::Event::Key { key, pressed, repeat, .. } => {
-                        if *repeat {
+                    egui::Event::Key { key, pressed, repeat, modifiers, .. } => {
+                        if *repeat || keymap::typed_as_text(*key, *modifiers) {
                             continue;
                         }
                         if let Some(k) = keymap::key(*key) {
                             send(InputEvent::Key { key: k, down: *pressed });
                         }
                     }
-                    // Only what the physical-key path cannot express, so
-                    // ASCII does not arrive twice.
-                    egui::Event::Text(text) if !text.is_ascii() => {
+                    // Only what the key path did not carry — non-ASCII and
+                    // punctuation — so letters and digits do not arrive twice.
+                    egui::Event::Text(text) if keymap::send_as_text(text) => {
                         send(InputEvent::Text { text: text.clone() });
                     }
                     // egui turns Ctrl+C and Ctrl+X into these and swallows the

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.8 — 2026-09-07
+
+- Desktop: `:`, `*` and the other shifted symbols type correctly. Punctuation
+  and shifted digits now travel as text, which the robot types character for
+  character whatever its keyboard layout; letters, digits, arrows and every
+  Ctrl/Alt shortcut still travel as key presses. `:` in particular used to
+  vanish, because egui reports Shift+; as a key of its own.
+
 ## 1.0.7 — 2026-09-07
 
 - Ubuntu 22.04 (jammy) is supported for real: the Linux packages are now

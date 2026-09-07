@@ -97,8 +97,75 @@ pub fn key(key: egui::Key) -> Option<KeyCode> {
         K::Period => KeyCode::Period,
         K::Slash => KeyCode::Slash,
 
+        // egui names the shifted symbol rather than the key under it, so
+        // Ctrl+: has to reach the host as the semicolon key with Shift held
+        // (Shift is mirrored separately).
+        K::Colon => KeyCode::Semicolon,
+        K::Plus => KeyCode::Equal,
+        K::Pipe => KeyCode::Backslash,
+        K::Questionmark => KeyCode::Slash,
+        K::Exclamationmark => KeyCode::Digit1,
+        K::OpenCurlyBracket => KeyCode::BracketLeft,
+        K::CloseCurlyBracket => KeyCode::BracketRight,
+
         _ => return None,
     })
+}
+
+/// Whether a key press should be left to the text event that follows it.
+///
+/// Letters, digits and shortcuts travel as keys so the robot sees real key
+/// presses (Ctrl+C, arrow keys, games). Punctuation typed plainly is
+/// different: what `Shift+8` produces depends on the robot's keyboard layout,
+/// and egui reports `Shift+;` as a `Colon` key that no physical code covers,
+/// so `:` used to vanish. The text event carries the exact character, and the
+/// host types that character whatever its layout. With Ctrl, Alt or Cmd held
+/// egui produces no text event, so the key itself is what a shortcut needs.
+pub fn typed_as_text(key: egui::Key, m: egui::Modifiers) -> bool {
+    if m.ctrl || m.alt || m.command {
+        return false;
+    }
+    use egui::Key as K;
+    match key {
+        K::Minus
+        | K::Equals
+        | K::Plus
+        | K::OpenBracket
+        | K::CloseBracket
+        | K::OpenCurlyBracket
+        | K::CloseCurlyBracket
+        | K::Backslash
+        | K::Pipe
+        | K::Semicolon
+        | K::Colon
+        | K::Quote
+        | K::Backtick
+        | K::Comma
+        | K::Period
+        | K::Slash
+        | K::Questionmark
+        | K::Exclamationmark => true,
+        // The digit itself goes as a key; the symbol above it goes as text.
+        K::Num0
+        | K::Num1
+        | K::Num2
+        | K::Num3
+        | K::Num4
+        | K::Num5
+        | K::Num6
+        | K::Num7
+        | K::Num8
+        | K::Num9 => m.shift,
+        _ => false,
+    }
+}
+
+/// Whether a text event carries something the key path did not: anything
+/// outside ASCII (Thai, accents, IME), or ASCII punctuation, which
+/// [`typed_as_text`] withheld from the key path. Letters, digits and spaces
+/// already arrived as keys and would otherwise be typed twice.
+pub fn send_as_text(text: &str) -> bool {
+    text.chars().any(|c| !c.is_ascii() || c.is_ascii_punctuation())
 }
 
 /// Modifier state has to be mirrored explicitly: egui reports modifiers as
@@ -111,4 +178,56 @@ pub fn modifier_keys(m: egui::Modifiers) -> [(KeyCode, bool); 4] {
         (KeyCode::AltLeft, m.alt),
         (KeyCode::MetaLeft, m.command && !m.ctrl),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::{Key as K, Modifiers as M};
+
+    fn shift() -> M {
+        M { shift: true, ..M::NONE }
+    }
+    fn ctrl() -> M {
+        M { ctrl: true, ..M::NONE }
+    }
+
+    #[test]
+    fn punctuation_and_shifted_digits_travel_as_text() {
+        // The two keys that started this: `:` and `*`.
+        assert!(typed_as_text(K::Colon, shift()));
+        assert!(typed_as_text(K::Num8, shift()));
+        assert!(send_as_text(":"));
+        assert!(send_as_text("*"));
+        // Plain punctuation too, so `;` is not typed twice.
+        assert!(typed_as_text(K::Semicolon, M::NONE));
+        assert!(send_as_text(";"));
+    }
+
+    #[test]
+    fn letters_digits_and_shortcuts_stay_keys() {
+        assert!(!typed_as_text(K::A, M::NONE));
+        assert!(!typed_as_text(K::A, shift()));
+        assert!(!typed_as_text(K::Num8, M::NONE));
+        assert!(!typed_as_text(K::Semicolon, ctrl()));
+        assert!(!typed_as_text(K::Minus, ctrl()), "Ctrl+- is a shortcut, not text");
+        assert!(!send_as_text("a"));
+        assert!(!send_as_text("8"));
+        assert!(!send_as_text(" "));
+    }
+
+    #[test]
+    fn non_ascii_text_is_always_sent() {
+        assert!(send_as_text("ก"));
+        assert!(send_as_text("é"));
+    }
+
+    #[test]
+    fn shifted_symbol_keys_map_to_the_key_under_them() {
+        assert_eq!(key(K::Colon), Some(KeyCode::Semicolon));
+        assert_eq!(key(K::Plus), Some(KeyCode::Equal));
+        assert_eq!(key(K::Pipe), Some(KeyCode::Backslash));
+        assert_eq!(key(K::Questionmark), Some(KeyCode::Slash));
+        assert_eq!(key(K::OpenCurlyBracket), Some(KeyCode::BracketLeft));
+    }
 }
