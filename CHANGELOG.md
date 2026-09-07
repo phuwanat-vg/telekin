@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.7 — 2026-09-07
+
+- Ubuntu 22.04 (jammy) is supported for real: the Linux packages are now
+  built on 22.04, so the same `.deb` installs on 22.04 and 24.04. Earlier
+  releases were built on 24.04 and needed a newer glibc than 22.04 has.
+
 ## 1.0.6 — 2026-09-07
 
 - Discovery: a host now advertises on network interfaces that come up after
