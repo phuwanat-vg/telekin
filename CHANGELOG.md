@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.6 — 2026-09-07
+
+- Discovery: a host now advertises on network interfaces that come up after
+  it started — a cable plugged in later, or WiFi switched off leaving only
+  Ethernet. Seen on a Pi 5 as "typing the address works, Scan finds nothing"
+  until the service was restarted. The mDNS library moved from mdns-sd 0.11
+  to 0.21, which reworked interface tracking.
+
 ## 1.0.5 — 2026-09-07
 
 - `telekin-robot-setup headless [WxH] [CONNECTOR]`: a robot with nothing on

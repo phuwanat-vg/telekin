@@ -139,7 +139,7 @@ pub fn discover(timeout: Duration) -> anyhow::Result<Vec<Discovered>> {
                 let mut addrs: Vec<std::net::SocketAddr> = info
                     .get_addresses()
                     .iter()
-                    .map(|ip| std::net::SocketAddr::new(*ip, port))
+                    .map(|ip| std::net::SocketAddr::new(ip.to_ip_addr(), port))
                     .collect();
                 // Rank first, then by address so repeated runs agree.
                 addrs.sort_by_key(|a| (address_rank(a), a.to_string()));
