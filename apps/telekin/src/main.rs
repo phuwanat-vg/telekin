@@ -267,8 +267,18 @@ pub struct Session {
     pub frame: Arc<Mutex<FrameSlot>>,
     /// The live QUIC connection, once established.
     live: Arc<Mutex<Option<telekin_transport::quinn::Connection>>>,
+    /// The endpoint behind it, from before the first packet: closing this is
+    /// what cancels an attempt that is still waiting on a silent robot.
+    endpoint: Arc<Mutex<Option<telekin_transport::quinn::Endpoint>>>,
     thread: Option<std::thread::JoinHandle<()>>,
+    /// Signalled when the network thread returns; dropped if it panics.
+    done: Option<std::sync::mpsc::Receiver<()>>,
 }
+
+/// How long teardown waits for the network thread before letting it go. The
+/// window must never sit behind the network: a thread that is still winding
+/// down after this is left to finish on its own.
+const TEARDOWN_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 impl Session {
     /// Start a session in the background. Errors during connection surface
@@ -295,13 +305,18 @@ impl Session {
         let (files_tx, files_rx) = mpsc::unbounded_channel();
         let file_state = files::shared();
         let live = Arc::new(Mutex::new(None));
+        let endpoint = Arc::new(Mutex::new(None));
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
 
         let thread = std::thread::spawn({
             let frame = frame.clone();
             let status = status.clone();
             let live = live.clone();
+            let endpoint = endpoint.clone();
             let file_state = file_state.clone();
             move || {
+                // Sent on every way out, including a panic unwinding past it.
+                let _done = DoneSignal(done_tx);
                 let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build()
                 {
                     Ok(r) => r,
@@ -329,6 +344,7 @@ impl Session {
                         file_state,
                         status: status.clone(),
                         live,
+                        endpoint,
                         waker: waker.clone(),
                     },
                 ));
@@ -351,7 +367,9 @@ impl Session {
             status,
             frame,
             live,
+            endpoint,
             thread: Some(thread),
+            done: Some(done_rx),
         }
     }
 
@@ -378,6 +396,15 @@ impl Session {
     }
 }
 
+/// Fires the session's done signal however the network thread ends.
+struct DoneSignal(std::sync::mpsc::Sender<()>);
+
+impl Drop for DoneSignal {
+    fn drop(&mut self) {
+        let _ = self.0.send(());
+    }
+}
+
 impl Drop for Session {
     fn drop(&mut self) {
         // Order matters, and getting it wrong hangs the window.
@@ -387,19 +414,37 @@ impl Drop for Session {
         // the connection goes away. Releasing the channels alone would leave
         // it waiting for the host to notice the closed control stream.
         //
+        // Before there is a connection there is an attempt, parked in the
+        // handshake with a robot that may be asleep; closing the endpoint is
+        // what ends that. Disconnect pressed during "Connecting…" used to
+        // wait here for the attempt to time out, which read as a hang.
+        //
         // The channels are then dropped explicitly, because field drop runs
-        // *after* this function — joining first would wait on a thread whose
+        // *after* this function — waiting first would wait on a thread whose
         // inputs are still open.
         if let Some(conn) = self.live.lock().expect("connection slot poisoned").take() {
             conn.close(0u32.into(), b"disconnected");
+        }
+        if let Some(endpoint) = self.endpoint.lock().expect("endpoint slot poisoned").take() {
+            endpoint.close(0u32.into(), b"disconnected");
         }
         self.input_tx.take();
         self.settings_tx.take();
         self.clipboard_tx.take();
         self.files_tx.take();
 
+        // Wait briefly for a clean exit, then let the thread go rather than
+        // freeze the window behind whatever it is still doing.
+        let finished = match self.done.take() {
+            Some(done) => done.recv_timeout(TEARDOWN_WAIT).is_ok(),
+            None => false,
+        };
         if let Some(t) = self.thread.take() {
-            let _ = t.join();
+            if finished {
+                let _ = t.join();
+            } else {
+                tracing::warn!("network thread still busy after {TEARDOWN_WAIT:?}; detaching it");
+            }
         }
     }
 }

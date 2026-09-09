@@ -57,13 +57,20 @@ you choose to, safe to run twice:
 
 ```bash
 sudo telekin-robot-setup check          # what is set now; changes nothing
-sudo telekin-robot-setup all $USER      # Xorg instead of Wayland, autologin, ufw 9631/udp, enable the service
+sudo telekin-robot-setup all $USER      # Xorg instead of Wayland, autologin, ufw 9631/udp, never sleep, enable the service
 sudo reboot
 ```
 
 Each step is also available on its own (`x11`, `autologin USER`, `firewall`,
-`service USER`, `headless`). It edits GDM's `custom.conf` and keeps a
-`.telekin-bak` beside it.
+`nosleep USER`, `service USER`, `headless`). It edits GDM's `custom.conf` and
+keeps a `.telekin-bak` beside it.
+
+**A robot must not fall asleep.** Ubuntu's desktop suspends the machine after
+twenty idle minutes, and an idle robot is the normal case: the session drops
+and nothing answers until someone walks over. `nosleep USER` masks the
+systemd sleep targets, so no timer, button or menu can suspend it, and turns
+off GNOME's idle suspend, screen blanking and lock for that account. `all`
+includes it; `check` reports it.
 
 **A robot with no screen shows a black desktop.** With nothing plugged into
 HDMI, Xorg invents a 1024×768 screen that GNOME never paints, and the viewer
@@ -80,15 +87,15 @@ command line — `cmdline.txt` on a Pi, `/etc/default/grub` on x86, extlinux on
 a Jetson — with the same `.telekin-bak` copy.
 
 Without internet on the robot, install the `.deb` from the releases page
-directly: `sudo apt install ./telekin-host_1.0.8-1_arm64.deb`.
+directly: `sudo apt install ./telekin-host_1.0.9-1_arm64.deb`.
 
 ### Computer
 
 | Platform | Install | Upgrade |
 |---|---|---|
-| Windows 10/11 | `telekin-1.0.8-windows-x64-setup.exe` — per-user, no admin needed | run the newer setup; it replaces in place |
+| Windows 10/11 | `telekin-1.0.9-windows-x64-setup.exe` — per-user, no admin needed | run the newer setup; it replaces in place |
 | Ubuntu | same repository as above, then `sudo apt install telekin` | `sudo apt upgrade` |
-| macOS 11+ | `telekin-1.0.8-macos.dmg`, drag to Applications. Unsigned: right-click → Open the first time | drag the new one over |
+| macOS 11+ | `telekin-1.0.9-macos.dmg`, drag to Applications. Unsigned: right-click → Open the first time | drag the new one over |
 
 The viewer checks for a newer version at start and shows an **Update to
 x.y.z** button in the corner of the first screen when there is one. Nothing is

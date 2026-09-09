@@ -144,8 +144,16 @@ pub struct Channels {
     pub status: Arc<Mutex<Status>>,
     /// Filled in once connected, so the UI can close the session promptly.
     pub live: Arc<Mutex<Option<quinn::Connection>>>,
+    /// Filled in before dialling, so the UI can abandon a connection attempt
+    /// that is still waiting on a robot that will never answer.
+    pub endpoint: Arc<Mutex<Option<quinn::Endpoint>>>,
     pub waker: crate::Waker,
 }
+
+/// How long one address gets to answer the handshake. A robot that is asleep
+/// or unplugged answers nothing, and QUIC's own idle timeout would keep the
+/// operator waiting 15 s per advertised address before saying so.
+pub const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub async fn run(
     params: Params,
@@ -160,10 +168,12 @@ pub async fn run(
         file_state,
         status,
         live,
+        endpoint: endpoint_slot,
         waker,
     } = channels;
     let endpoint = telekin_transport::client_endpoint(params.fingerprint)?;
-    let conn = connect_any(&endpoint, &params.hosts).await?;
+    *endpoint_slot.lock().expect("endpoint slot poisoned") = Some(endpoint.clone());
+    let conn = connect_any(&endpoint, &params.hosts, CONNECT_TIMEOUT).await?;
     // Publish it so a disconnect can tear the session down immediately rather
     // than waiting for a channel to close and a round trip to notice.
     *live.lock().expect("connection slot poisoned") = Some(conn.clone());
@@ -372,23 +382,25 @@ pub async fn run(
 async fn connect_any(
     endpoint: &quinn::Endpoint,
     hosts: &[SocketAddr],
+    per_address: std::time::Duration,
 ) -> anyhow::Result<quinn::Connection> {
     anyhow::ensure!(!hosts.is_empty(), "no host address to connect to");
     let mut last_err = None;
 
     for (i, addr) in hosts.iter().enumerate() {
-        match endpoint.connect(*addr, "chassis")?.await {
-            Ok(conn) => {
+        let attempt = endpoint.connect(*addr, "chassis")?;
+        let outcome = match tokio::time::timeout(per_address, attempt).await {
+            Ok(Ok(conn)) => {
                 tracing::info!("connected to {addr}");
                 return Ok(conn);
             }
-            Err(e) => {
-                if i + 1 < hosts.len() {
-                    tracing::debug!("{addr} did not answer ({e}); trying the next address");
-                }
-                last_err = Some((*addr, e));
-            }
+            Ok(Err(e)) => e.to_string(),
+            Err(_) => format!("no answer within {} s", per_address.as_secs()),
+        };
+        if i + 1 < hosts.len() {
+            tracing::debug!("{addr} did not answer ({outcome}); trying the next address");
         }
+        last_err = Some((*addr, outcome));
     }
 
     let (addr, e) = last_err.expect("at least one address was tried");
@@ -906,4 +918,46 @@ async fn receive_download(
         .finish(id, Ok(()));
     waker.get().map(egui::Context::request_repaint);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A robot that is asleep answers nothing. The attempt has to give up on
+    /// its own, quickly, or Disconnect sits waiting on it and the window
+    /// freezes for QUIC's 15 s idle timeout per address.
+    #[tokio::test]
+    async fn an_unanswered_address_gives_up_within_the_timeout() {
+        // TEST-NET-1 is never routed, so nothing ever answers.
+        let endpoint = telekin_transport::client_endpoint(None).expect("endpoint");
+        let hosts = ["192.0.2.1:9631".parse().unwrap(), "192.0.2.2:9631".parse().unwrap()];
+        let started = std::time::Instant::now();
+        let result = connect_any(&endpoint, &hosts, std::time::Duration::from_millis(300)).await;
+        assert!(result.is_err());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "two addresses at 300 ms each took {:?}",
+            started.elapsed()
+        );
+        let text = format!("{:#}", result.unwrap_err());
+        assert!(text.contains("advertised addresses"), "{text}");
+    }
+
+    /// Closing the endpoint from another thread is how the UI abandons an
+    /// attempt in progress; the attempt has to come back at once.
+    #[tokio::test]
+    async fn closing_the_endpoint_abandons_a_pending_attempt() {
+        let endpoint = telekin_transport::client_endpoint(None).expect("endpoint");
+        let hosts = ["192.0.2.1:9631".parse().unwrap()];
+        let closer = endpoint.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            closer.close(0u32.into(), b"disconnected");
+        });
+        let started = std::time::Instant::now();
+        let result = connect_any(&endpoint, &hosts, std::time::Duration::from_secs(30)).await;
+        assert!(result.is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(3), "{:?}", started.elapsed());
+    }
 }

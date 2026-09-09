@@ -14,12 +14,23 @@
 #   sudo telekin-robot-setup headless [WxH] [CONNECTOR]
 #                                               pretend a monitor is plugged in, for a robot with no
 #                                               screen (default 1920x1080 on the first HDMI port)
-#   sudo telekin-robot-setup all USER           x11 + autologin USER + firewall + service USER,
-#                                               plus headless when no monitor is connected
+#   sudo telekin-robot-setup nosleep USER       never suspend, never blank or lock the screen
+#   sudo telekin-robot-setup all USER           x11 + autologin USER + firewall + nosleep USER
+#                                               + service USER, plus headless when no monitor
+#                                               is connected
 #
 # x11 and autologin edit GDM's custom.conf. The first edit keeps a copy beside
 # it as custom.conf.telekin-bak. A reboot applies x11; autologin applies at
 # the next boot too.
+#
+# nosleep is what keeps a robot reachable. Ubuntu's desktop suspends the
+# machine after twenty idle minutes, and an idle robot is the normal case: the
+# host vanishes mid-session and nothing answers until someone walks over. The
+# systemd sleep targets are masked, so no timer, button or menu can suspend
+# it, and GNOME's own idle suspend, screen blanking and lock are turned off
+# for the account. Takes effect at once for the sleep targets; GNOME picks up
+# its settings live when the account is signed in, otherwise at the next
+# sign-in.
 #
 # headless matters more than it sounds: with nothing on HDMI, Xorg makes up a
 # 1024x768 screen that GNOME never paints, and the viewer shows solid black.
@@ -160,6 +171,60 @@ do_service() {
     fi
 }
 
+# Run a gsettings command as the account. Through its own session bus when it
+# is signed in, so the running desktop sees the change now; through a private
+# bus otherwise, which still lands in its dconf database for the next sign-in.
+gsettings_as() {
+    local user="$1"; shift
+    local uid
+    uid="$(id -u "$user")"
+    if [ -S "/run/user/$uid/bus" ]; then
+        runuser -u "$user" -- env "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" \
+            "XDG_RUNTIME_DIR=/run/user/$uid" gsettings "$@"
+    else
+        runuser -u "$user" -- dbus-run-session -- gsettings "$@"
+    fi
+}
+
+SLEEP_TARGETS="sleep.target suspend.target hibernate.target hybrid-sleep.target"
+
+sleep_masked() {
+    [ "$(systemctl is-enabled sleep.target 2>/dev/null)" = "masked" ]
+}
+
+do_nosleep() {
+    need_root; need_user "${1:-}" nosleep
+    # shellcheck disable=SC2086
+    systemctl mask $SLEEP_TARGETS >/dev/null 2>&1 \
+        || die "could not mask the sleep targets (is this systemd?)"
+    echo "nosleep: suspend and hibernate are masked; nothing can put this machine to sleep"
+    if ! command -v gsettings >/dev/null; then
+        echo "nosleep: no gsettings on this machine, so no desktop idle settings to change"
+        return
+    fi
+    gsettings_as "$1" set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type nothing
+    gsettings_as "$1" set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type nothing
+    gsettings_as "$1" set org.gnome.desktop.session idle-delay 0
+    gsettings_as "$1" set org.gnome.desktop.screensaver lock-enabled false
+    echo "nosleep: $1's desktop will not suspend, blank or lock when idle"
+}
+
+check_sleep() {
+    if sleep_masked; then
+        echo "sleep:           suspend is masked; the machine stays up"
+    elif systemctl list-units --type=target >/dev/null 2>&1; then
+        echo "sleep:           suspend is NOT masked — an idle desktop suspends after 20 min; run: sudo telekin-robot-setup nosleep <user>"
+    fi
+    local user
+    user="$(daemon_key AutomaticLogin)"
+    if [ "$user" != "(not set)" ] && command -v gsettings >/dev/null && getent passwd "$user" >/dev/null; then
+        local ac idle
+        ac="$(gsettings_as "$user" get org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 2>/dev/null || echo '?')"
+        idle="$(gsettings_as "$user" get org.gnome.desktop.session idle-delay 2>/dev/null || echo '?')"
+        echo "desktop idle:    $user: suspend on AC $ac, screen blank after $idle   (wants 'nothing' and uint32 0)"
+    fi
+}
+
 do_headless() {
     need_root
     local mode="${1:-1920x1080}" conn="${2:-}"
@@ -228,6 +293,7 @@ do_check() {
         echo "console session: nobody is signed in on the console"
     fi
     check_display
+    check_sleep
     if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
         if ufw status | grep -qE "^$PORT/udp"; then
             echo "firewall:        ufw active, UDP $PORT allowed"
@@ -254,6 +320,7 @@ case "$cmd" in
     firewall)  do_firewall ;;
     service)   do_service "${2:-}" ;;
     headless)  do_headless "${2:-}" "${3:-}" ;;
+    nosleep)   do_nosleep "${2:-}" ;;
     all)
         need_user "${2:-}" all
         do_x11
@@ -263,10 +330,11 @@ case "$cmd" in
             echo "no monitor is connected, so:"
             do_headless
         fi
+        do_nosleep "$2"
         do_service "$2"
         echo
         echo "done. Reboot to apply the X11, autologin and display changes:  sudo reboot"
         ;;
     ""|-h|--help|help) usage ;;
-    *) die "unknown command '$cmd' (try: check, x11, autologin, firewall, service, headless, all)" ;;
+    *) die "unknown command '$cmd' (try: check, x11, autologin, firewall, service, headless, nosleep, all)" ;;
 esac

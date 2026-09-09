@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.9 — 2026-09-09
+
+- Viewer: Disconnect, or a second Connect, no longer freezes the window while
+  a connection attempt is still waiting on a robot that has gone quiet. The
+  attempt is abandoned at once, and each address gets 5 s to answer instead
+  of QUIC's 15 s idle timeout. Teardown waits at most 3 s for the network
+  thread and then lets it go.
+- `telekin-robot-setup nosleep USER`: masks the systemd sleep targets and
+  turns off GNOME's idle suspend, screen blanking and lock for the account.
+  Ubuntu suspends an idle desktop after twenty minutes by default, which is
+  how a robot "hangs" mid-session. `all` includes it; `check` reports it.
+
 ## 1.0.8 — 2026-09-07
 
 - Desktop: `:`, `*` and the other shifted symbols type correctly. Punctuation
