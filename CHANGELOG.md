@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.11 — 2026-09-10
+
+- Host: characters that arrive as text (punctuation, shifted symbols, Thai
+  and other non-Latin text) type reliably. They used to go through one
+  scratch keycode that was remapped and reset around every press; a client
+  that read the keyboard map after the reset found no symbol and typed
+  nothing, which on a Pi was the usual order of events — `-`, `:` and `*`
+  silently vanished. A character the robot's layout has is now typed on its
+  own key with Shift pressed or lifted as needed; anything else borrows one of
+  eight spare keycodes in rotation, left mapped until reused. Covered by a
+  live test against a real X server.
+
 ## 1.0.10 — 2026-09-09
 
 - Viewer: `telekin --trace-input` prints every key and text event the window

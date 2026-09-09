@@ -4,6 +4,7 @@
 //! monitor (`0.0..=1.0`); the backend maps them onto that monitor's pixels.
 
 pub mod clipboard;
+pub mod xkeys;
 
 use telekin_proto::InputEvent;
 

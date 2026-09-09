@@ -14,7 +14,13 @@ use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt as _;
 
 use super::InputInjector;
+use crate::xkeys::{char_keysym, Layout, ScratchPool};
 use telekin_proto::{InputEvent, KeyCode, MouseButton};
+
+/// Spare keycodes borrowed for characters the layout lacks. Each stays
+/// mapped until the pool comes round to it again, so a client that reads the
+/// map late still finds the keysym it was sent.
+const SCRATCH_KEYS: usize = 8;
 
 
 /// Connect to the X server, turning the usual failures into an error that
@@ -50,8 +56,12 @@ struct XTestInput {
     height: u32,
     /// Our [`KeyCode`] -> X keycode, resolved from the live keyboard mapping.
     keymap: std::collections::HashMap<KeyCode, Keycode>,
-    /// Scratch keycode reserved for typing characters the layout lacks.
-    scratch: Option<Keycode>,
+    /// What the server's layout can type, for characters that arrive as text.
+    layout: Layout,
+    /// Spare keycodes for characters the layout cannot type.
+    scratch: ScratchPool,
+    /// X keycodes of the Shift keys, so typing can tell whether Shift is held.
+    shift_keys: Vec<Keycode>,
     held_keys: HashSet<Keycode>,
     held_buttons: HashSet<u8>,
 }
@@ -74,7 +84,9 @@ impl XTestInput {
             width,
             height,
             keymap: Default::default(),
-            scratch: None,
+            layout: Layout::from_mapping(0, 0, &[]),
+            scratch: ScratchPool::new(&[], 0),
+            shift_keys: Vec::new(),
             held_keys: HashSet::new(),
             held_buttons: HashSet::new(),
         };
@@ -95,33 +107,23 @@ impl XTestInput {
             .reply()
             .context("GetKeyboardMapping failed")?;
         let per = mapping.keysyms_per_keycode as usize;
-
-        // Reverse index: keysym -> first keycode that produces it unshifted.
-        let mut by_sym: std::collections::HashMap<u32, Keycode> = Default::default();
-        for (i, syms) in mapping.keysyms.chunks(per).enumerate() {
-            let kc = min + i as u8;
-            for (level, sym) in syms.iter().enumerate() {
-                if *sym != 0 {
-                    // Prefer level 0 so we don't need a modifier to reach the key.
-                    by_sym.entry(*sym).or_insert(kc);
-                    if level == 0 {
-                        by_sym.insert(*sym, kc);
-                        break;
-                    }
-                }
-            }
-        }
+        self.layout = Layout::from_mapping(min, per, &mapping.keysyms);
 
         for key in ALL_KEYS {
-            if let Some(kc) = by_sym.get(&keysym(*key)) {
-                self.keymap.insert(*key, *kc);
+            if let Some((kc, _)) = self.layout.lookup(keysym(*key)) {
+                self.keymap.insert(*key, kc);
             }
         }
-        // An unmapped keycode we can rebind on the fly for arbitrary text.
-        self.scratch = (min..=max).find(|kc| {
-            let i = (*kc - min) as usize * per;
-            mapping.keysyms[i..i + per].iter().all(|s| *s == 0)
-        });
+        self.shift_keys = [KeyCode::ShiftLeft, KeyCode::ShiftRight]
+            .iter()
+            .filter_map(|k| self.keymap.get(k).copied())
+            .collect();
+        self.scratch = ScratchPool::new(self.layout.free_keycodes(), SCRATCH_KEYS);
+        if self.scratch.is_empty() {
+            tracing::warn!(
+                "the X keyboard mapping has no free keycode; characters outside the robot's layout cannot be typed"
+            );
+        }
         Ok(())
     }
 
@@ -154,23 +156,90 @@ impl XTestInput {
         self.fake_button(button, false)
     }
 
-    /// Type one character by temporarily binding it to the scratch keycode.
+    /// Type one character.
+    ///
+    /// A character the layout already has is typed on its own key, with
+    /// Shift pressed or lifted around it as the level demands — the keystroke
+    /// a person at the robot would make, which every client reads alike.
+    /// Anything else borrows a keycode from the scratch pool. The old way,
+    /// one scratch keycode remapped and reset around every press, lost
+    /// characters: a client that fetched the map after the reset found no
+    /// keysym and typed nothing, and on a slow board that was the usual
+    /// order of events.
     fn type_char(&mut self, ch: char) -> anyhow::Result<()> {
-        let Some(scratch) = self.scratch else {
+        let sym = char_keysym(ch);
+        if let Some((kc, shifted)) = self.layout.lookup(sym) {
+            return self.tap_with_shift(kc, shifted);
+        }
+        let Some((kc, remap)) = self.scratch.slot_for(sym) else {
             tracing::warn!("no free keycode for text injection; dropping {ch:?}");
             return Ok(());
         };
-        let sym = char_keysym(ch);
-        // The whole row must be filled, otherwise shifted levels keep stale syms.
-        self.conn.change_keyboard_mapping(1, scratch, 1, &[sym])?;
-        self.conn.flush()?;
-        // The server needs the new mapping applied before the synthetic press.
-        self.conn.sync()?;
-        self.fake_key(scratch, true)?;
-        self.fake_key(scratch, false)?;
-        self.conn.change_keyboard_mapping(1, scratch, 1, &[0])?;
+        if remap {
+            self.conn.change_keyboard_mapping(1, kc, 1, &[sym])?;
+            self.conn.flush()?;
+            // The server must have applied the mapping before the press.
+            self.conn.sync()?;
+        }
+        // One keysym per keycode: with Shift the server would give its
+        // uppercase form, so type it plain.
+        self.tap_with_shift(kc, false)
+    }
+
+    /// Press and release `kc` with Shift in the wanted state, then put Shift
+    /// back the way the operator has it. The temporary Shift changes bypass
+    /// `held_keys` on purpose: that set mirrors the operator's fingers.
+    fn tap_with_shift(&mut self, kc: Keycode, shifted: bool) -> anyhow::Result<()> {
+        let held: Vec<Keycode> = self
+            .shift_keys
+            .iter()
+            .copied()
+            .filter(|s| self.held_keys.contains(s))
+            .collect();
+        let lift = !shifted && !held.is_empty();
+        let add = shifted && held.is_empty();
+        let shift = self.shift_keys.first().copied();
+        if lift {
+            for s in &held {
+                self.raw_key(*s, false)?;
+            }
+        }
+        if add {
+            if let Some(s) = shift {
+                self.raw_key(s, true)?;
+            }
+        }
+        self.raw_key(kc, true)?;
+        self.raw_key(kc, false)?;
+        if add {
+            if let Some(s) = shift {
+                self.raw_key(s, false)?;
+            }
+        }
+        if lift {
+            for s in &held {
+                self.raw_key(*s, true)?;
+            }
+        }
         self.conn.flush()?;
         Ok(())
+    }
+
+    /// A key event with no bookkeeping.
+    fn raw_key(&mut self, kc: Keycode, down: bool) -> anyhow::Result<()> {
+        let ty = if down { 2 } else { 3 }; // KeyPress / KeyRelease
+        self.conn.xtest_fake_input(ty, kc, 0, self.root, 0, 0, 0)?;
+        Ok(())
+    }
+}
+
+impl Drop for XTestInput {
+    fn drop(&mut self) {
+        // Give the borrowed keycodes back.
+        for kc in self.scratch.mapped().collect::<Vec<_>>() {
+            let _ = self.conn.change_keyboard_mapping(1, kc, 1, &[0]);
+        }
+        let _ = self.conn.flush();
     }
 }
 
@@ -231,17 +300,6 @@ impl InputInjector for XTestInput {
         }
         self.conn.flush()?;
         Ok(())
-    }
-}
-
-/// Latin-1 and ASCII map to their code point; everything else uses the
-/// Unicode keysym range defined by the X protocol.
-fn char_keysym(ch: char) -> u32 {
-    let c = ch as u32;
-    if c < 0x100 {
-        c
-    } else {
-        c | 0x0100_0000
     }
 }
 
@@ -326,5 +384,91 @@ mod tests {
     #[test]
     fn a_runaway_delta_is_capped() {
         assert_eq!(wheel_clicks(10_000.0), 20);
+    }
+}
+
+/// Needs a live X server with XTEST (WSLg, Xvfb, a desktop). Types through
+/// the injector into a window of our own and reads back what the server
+/// delivered, interpreting each keycode with the mapping *as it stands when
+/// the event is read* — the way a real client does, and what the old
+/// one-scratch-keycode approach lost characters to.
+#[cfg(test)]
+mod live {
+    use super::*;
+    use x11rb::protocol::xproto::*;
+    use x11rb::protocol::Event;
+
+    fn keysym_char(sym: u32) -> Option<char> {
+        if sym == 0 {
+            return None;
+        }
+        if sym < 0x100 {
+            char::from_u32(sym)
+        } else if sym & 0xff00_0000 == 0x0100_0000 {
+            char::from_u32(sym & 0x00ff_ffff)
+        } else {
+            None
+        }
+    }
+
+    #[test]
+    #[ignore = "needs an X display with XTEST"]
+    fn typed_text_arrives_as_the_same_characters() {
+        let (conn, screen_num) = x11rb::connect(None).expect("X display");
+        let screen = &conn.setup().roots[screen_num];
+        let win = conn.generate_id().unwrap();
+        conn.create_window(
+            x11rb::COPY_DEPTH_FROM_PARENT,
+            win,
+            screen.root,
+            0,
+            0,
+            200,
+            100,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            0,
+            &CreateWindowAux::new().event_mask(EventMask::KEY_PRESS | EventMask::KEY_RELEASE),
+        )
+        .unwrap();
+        conn.map_window(win).unwrap();
+        conn.flush().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        conn.set_input_focus(InputFocus::POINTER_ROOT, win, x11rb::CURRENT_TIME).unwrap();
+        conn.sync().unwrap();
+        while conn.poll_for_event().unwrap().is_some() {}
+
+        let mut inj = XTestInput::new(0, screen.width_in_pixels.into(), screen.height_in_pixels.into())
+            .expect("injector");
+        // Plain, shifted, uppercase, space, then Thai (not in a Latin
+        // layout, so through the scratch pool), then a repeat of the Thai to
+        // exercise "already mapped".
+        let text = "-:*aA \u{e01}\u{e02}\u{e01}";
+        inj.inject(&InputEvent::Text { text: text.into() }).unwrap();
+        // Now with Shift held by the "operator": ':' must still come out as
+        // ':' and '-' as '-', whatever Shift would have made of the key.
+        inj.inject(&InputEvent::Key { key: KeyCode::ShiftLeft, down: true }).unwrap();
+        inj.inject(&InputEvent::Text { text: ":-".into() }).unwrap();
+        inj.inject(&InputEvent::Key { key: KeyCode::ShiftLeft, down: false }).unwrap();
+        let expected = format!("{text}:-");
+
+        let mut got = String::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while got.chars().count() < expected.chars().count() && std::time::Instant::now() < deadline {
+            match conn.poll_for_event().unwrap() {
+                Some(Event::KeyPress(e)) => {
+                    let m = conn.get_keyboard_mapping(e.detail, 1).unwrap().reply().unwrap();
+                    let per = m.keysyms_per_keycode as usize;
+                    let shift = e.state.contains(KeyButMask::SHIFT);
+                    let sym = if shift && per > 1 && m.keysyms[1] != 0 { m.keysyms[1] } else { m.keysyms[0] };
+                    if let Some(c) = keysym_char(sym) {
+                        got.push(c);
+                    }
+                }
+                Some(_) => {}
+                None => std::thread::sleep(std::time::Duration::from_millis(5)),
+            }
+        }
+        assert_eq!(got, expected);
     }
 }
