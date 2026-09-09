@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.12 — 2026-09-10
+
+- Colour: white is white again. The robot encoded limited-range video
+  (white = 235) while the viewer's decoder converts full range, so every
+  white window came out light grey, black was lifted to dark grey, and
+  colours were slightly washed. The encoder now uses full range to match the
+  decoder; a roundtrip test pins white ≥ 250, black ≤ 5 and saturated
+  primaries. Only the robot needs the upgrade.
+
 ## 1.0.11 — 2026-09-10
 
 - Host: characters that arrive as text (punctuation, shifted symbols, Thai

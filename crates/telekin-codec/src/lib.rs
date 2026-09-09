@@ -321,19 +321,28 @@ impl VideoDecoder for H264Decoder {
 // BGRA -> I420 conversion
 // ---------------------------------------------------------------------------
 
-/// BT.601 limited-range luma: `Y = 16 + (66R + 129G + 25B) / 256`.
+// Colour range. Both ends of this pipeline are ours, so the choice is only
+// about agreeing with the decoder: openh264's RGB writer applies the plain
+// full-range BT.601 inverse (`R = Y + 1.402 (Cr - 128)`, no 16 offset, no
+// 219/255 scale). Encoding limited range against that painted white as grey
+// 235 and lifted black to 16, and desaturated every colour by 224/255. Full
+// range also keeps every one of the 256 steps of a screenshot, which is
+// what screen content wants.
+
+/// Full-range BT.601 luma: `Y = (77R + 150G + 29B) / 256`, so white is 255
+/// and black is 0.
 #[inline(always)]
 fn luma((r, g, b): (u32, u32, u32)) -> u8 {
-    (16 + ((66 * r + 129 * g + 25 * b + 128) >> 8)).min(235) as u8
+    ((77 * r + 150 * g + 29 * b + 128) >> 8).min(255) as u8
 }
 
-/// BT.601 limited-range chroma, returned as `(Cb, Cr)`.
+/// Full-range BT.601 chroma, returned as `(Cb, Cr)`, centred on 128.
 #[inline(always)]
 fn chroma(r: u32, g: u32, b: u32) -> (u8, u8) {
     let (r, g, b) = (r as i32, g as i32, b as i32);
-    let cb = 128 + ((-38 * r - 74 * g + 112 * b + 128) >> 8);
-    let cr = 128 + ((112 * r - 94 * g - 18 * b + 128) >> 8);
-    (cb.clamp(16, 240) as u8, cr.clamp(16, 240) as u8)
+    let cb = 128 + ((-43 * r - 85 * g + 128 * b + 128) >> 8);
+    let cr = 128 + ((128 * r - 107 * g - 21 * b + 128) >> 8);
+    (cb.clamp(0, 255) as u8, cr.clamp(0, 255) as u8)
 }
 
 #[derive(Default)]
@@ -347,8 +356,8 @@ struct I420Buffer {
 
 impl I420Buffer {
     /// Convert BGRA (`src_w` wide, tightly packed) into I420, cropping to
-    /// `w` x `h` (both even). BT.601 limited range — what a decoder assumes
-    /// unless told otherwise.
+    /// `w` x `h` (both even). Full-range BT.601, matching the decoder's
+    /// RGB writer (see the note above `luma`).
     ///
     /// Written as zipped row slices rather than indexed lookups: this runs on
     /// every pixel of every frame, and the iterator form lets the compiler drop
@@ -500,9 +509,52 @@ mod tests {
 
         let (b, g, r) = sample(&out, W, 3 * W / 4, 3 * H / 4);
         assert!(
-            r > 180 && g > 180 && b > 180,
+            r > 245 && g > 245 && b > 245,
             "bottom-right should be white, got {r},{g},{b}"
         );
+    }
+
+    /// A solid frame of one colour, BGRA.
+    fn solid(w: u32, h: u32, (r, g, b): (u8, u8, u8)) -> Vec<u8> {
+        [b, g, r, 255].repeat((w * h) as usize)
+    }
+
+    /// Encode one solid frame and return the decoded colour at the centre.
+    fn roundtrip_solid(rgb: (u8, u8, u8)) -> (u8, u8, u8) {
+        const W: u32 = 160;
+        const H: u32 = 120;
+        let mut encoder = H264Encoder::new(8_000, 30).unwrap();
+        let mut decoder = H264Decoder::new().unwrap();
+        let encoded = encoder.encode_bgra(W, H, &solid(W, H, rgb)).unwrap().unwrap();
+        let mut out = Vec::new();
+        decoder.decode_to_bgra(&encoded.data, &mut out).unwrap().unwrap();
+        let (b, g, r) = sample(&out, W, W / 2, H / 2);
+        (r, g, b)
+    }
+
+    /// White must come back white and black black. The first version of this
+    /// pipeline encoded limited range against a full-range decoder, and every
+    /// white window on the robot showed as light grey (235) in the viewer.
+    #[test]
+    fn white_stays_white_and_black_stays_black() {
+        let (r, g, b) = roundtrip_solid((255, 255, 255));
+        assert!(r >= 250 && g >= 250 && b >= 250, "white decoded as {r},{g},{b}");
+        let (r, g, b) = roundtrip_solid((0, 0, 0));
+        assert!(r <= 5 && g <= 5 && b <= 5, "black decoded as {r},{g},{b}");
+        // A mid grey should land near itself, not be stretched or squeezed.
+        let (r, g, b) = roundtrip_solid((128, 128, 128));
+        assert!((120..=136).contains(&r) && (120..=136).contains(&g) && (120..=136).contains(&b),
+            "grey 128 decoded as {r},{g},{b}");
+    }
+
+    /// Saturated colours keep their saturation: with the ranges mismatched
+    /// they came back visibly washed out.
+    #[test]
+    fn primaries_keep_their_saturation() {
+        let (r, g, b) = roundtrip_solid((255, 0, 0));
+        assert!(r >= 240 && g <= 15 && b <= 15, "red decoded as {r},{g},{b}");
+        let (r, g, b) = roundtrip_solid((0, 0, 255));
+        assert!(b >= 240 && r <= 15 && g <= 15, "blue decoded as {r},{g},{b}");
     }
 
     #[test]
