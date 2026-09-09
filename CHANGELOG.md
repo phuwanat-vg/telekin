@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.10 — 2026-09-09
+
+- Viewer: `telekin --trace-input` prints every key and text event the window
+  receives while connected and what was sent to the robot for it, so a "this
+  key does not type" report on one platform can be read off rather than
+  guessed at.
+
 ## 1.0.9 — 2026-09-09
 
 - Viewer: Disconnect, or a second Connect, no longer freezes the window while

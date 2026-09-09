@@ -87,15 +87,15 @@ command line — `cmdline.txt` on a Pi, `/etc/default/grub` on x86, extlinux on
 a Jetson — with the same `.telekin-bak` copy.
 
 Without internet on the robot, install the `.deb` from the releases page
-directly: `sudo apt install ./telekin-host_1.0.9-1_arm64.deb`.
+directly: `sudo apt install ./telekin-host_1.0.10-1_arm64.deb`.
 
 ### Computer
 
 | Platform | Install | Upgrade |
 |---|---|---|
-| Windows 10/11 | `telekin-1.0.9-windows-x64-setup.exe` — per-user, no admin needed | run the newer setup; it replaces in place |
+| Windows 10/11 | `telekin-1.0.10-windows-x64-setup.exe` — per-user, no admin needed | run the newer setup; it replaces in place |
 | Ubuntu | same repository as above, then `sudo apt install telekin` | `sudo apt upgrade` |
-| macOS 11+ | `telekin-1.0.9-macos.dmg`, drag to Applications. Unsigned: right-click → Open the first time | drag the new one over |
+| macOS 11+ | `telekin-1.0.10-macos.dmg`, drag to Applications. Unsigned: right-click → Open the first time | drag the new one over |
 
 The viewer checks for a newer version at start and shows an **Update to
 x.y.z** button in the corner of the first screen when there is one. Nothing is

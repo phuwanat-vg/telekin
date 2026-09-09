@@ -101,6 +101,12 @@ struct Args {
     /// `TELEKIN_UPDATE_URL` pointed at its own server.
     #[arg(long)]
     no_update_check: bool,
+
+    /// Print every key and text event the window receives while connected,
+    /// and what was sent to the robot for it. For "this key does not type"
+    /// reports: run from a terminal, press the key, paste the lines.
+    #[arg(long)]
+    trace_input: bool,
 }
 
 /// Icon size. 64 is large enough that Windows downscales rather than guesses.

@@ -55,6 +55,8 @@ const ROW_RADIUS: u8 = 8;
 type ScanResult = Arc<Mutex<Option<anyhow::Result<Vec<Discovered>>>>>;
 
 pub struct ViewerApp {
+    /// `--trace-input`: log keyboard events and what they turned into.
+    trace_input: bool,
     address: String,
     username: String,
     password: String,
@@ -144,6 +146,7 @@ impl ViewerApp {
             _ => String::new(),
         };
         let mut app = Self {
+            trace_input: args.trace_input,
             address,
             username: args.user.clone().unwrap_or_default(),
             password: args.password.clone().unwrap_or_default(),
@@ -1479,18 +1482,47 @@ impl ViewerApp {
                     // F11 toggles immersive mode, so it is the viewer's key
                     // rather than the robot's. Everything else goes through.
                     egui::Event::Key { key: egui::Key::F11, .. } => {}
-                    egui::Event::Key { key, pressed, repeat, modifiers, .. } => {
-                        if *repeat || keymap::typed_as_text(*key, *modifiers) {
+                    egui::Event::Key { key, pressed, repeat, modifiers, physical_key } => {
+                        let as_text = keymap::typed_as_text(*key, *modifiers);
+                        let mapped = keymap::key(*key);
+                        if self.trace_input {
+                            tracing::info!(
+                                "input: key {key:?} (physical {physical_key:?}) pressed={pressed} repeat={repeat} \
+                                 shift={} ctrl={} alt={} -> {}",
+                                modifiers.shift,
+                                modifiers.ctrl,
+                                modifiers.alt,
+                                if *repeat {
+                                    "ignored (repeat)".to_string()
+                                } else if as_text {
+                                    "left to the text event".to_string()
+                                } else if let Some(k) = mapped {
+                                    format!("sent as {k:?}")
+                                } else {
+                                    "no portable key; dropped".to_string()
+                                }
+                            );
+                        }
+                        if *repeat || as_text {
                             continue;
                         }
-                        if let Some(k) = keymap::key(*key) {
+                        if let Some(k) = mapped {
                             send(InputEvent::Key { key: k, down: *pressed });
                         }
                     }
                     // Only what the key path did not carry — non-ASCII and
                     // punctuation — so letters and digits do not arrive twice.
-                    egui::Event::Text(text) if keymap::send_as_text(text) => {
-                        send(InputEvent::Text { text: text.clone() });
+                    egui::Event::Text(text) => {
+                        let wanted = keymap::send_as_text(text);
+                        if self.trace_input {
+                            tracing::info!(
+                                "input: text {text:?} -> {}",
+                                if wanted { "sent as text" } else { "already sent as a key" }
+                            );
+                        }
+                        if wanted {
+                            send(InputEvent::Text { text: text.clone() });
+                        }
                     }
                     // egui turns Ctrl+C and Ctrl+X into these and swallows the
                     // letter, so the host would otherwise see the modifier go
