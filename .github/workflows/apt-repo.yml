@@ -1,0 +1,69 @@
+# Publishes the APT repository to GitHub Pages.
+#
+# Called by the release workflow once the release exists (the .debs come from
+# the release's assets, so nothing is rebuilt), and can be run by hand from
+# the Actions tab. It is *called*, not triggered by the release event: a
+# release created with the workflow's own GITHUB_TOKEN does not fire
+# `release: published` — GitHub suppresses that to stop workflows starting
+# each other forever — and the first attempt at this relied on it and
+# silently never ran.
+#
+# The signing key is the APT_SIGNING_KEY repository secret; its public half is
+# committed at packaging/apt/ and served alongside the packages.
+
+name: apt-repo
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag whose packages to publish (empty = newest)"
+        type: string
+        default: ""
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag whose packages to publish (empty = newest)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends dpkg-dev apt-utils gnupg
+      - name: Fetch the release's packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          # Empty means the newest release.
+          gh release download ${{ inputs.tag }} --pattern '*.deb' --dir dist
+          ls -l dist
+      - name: Build and sign the repository
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+        run: bash packaging/apt/build-repo.sh
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: repo
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

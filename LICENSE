@@ -1,0 +1,58 @@
+Telekin End User Licence
+
+Copyright (c) 2026 Phuwanat, IRiSH LAB. All rights reserved.
+
+This licence covers Telekin and its host program (chassis, packaged as
+telekin-host), version 1.0.13 and later, as distributed in binary form from
+https://github.com/phuwanat-vg/telekin and the package repository at
+https://phuwanat-vg.github.io/telekin.
+
+1. What you may do
+
+   You may install and use the software free of charge, on any number of
+   computers and robots, for any purpose, including commercial work.
+
+2. What you may not do
+
+   a. Redistribute, sell, rent, lease or sublicense the software. Pointing
+      someone to the official download locations above is always allowed.
+   b. Modify, reverse engineer, decompile or disassemble the software,
+      except where applicable law expressly permits it despite this limit.
+   c. Remove or alter any copyright or licence notice.
+
+3. Earlier versions
+
+   Versions 1.0.0 to 1.0.12 were published under the MIT License. They
+   remain available to everyone under that licence. This licence does not
+   change that and cannot.
+
+4. Third-party components
+
+   The software includes open-source components. Their licences and notices
+   are in THIRD-PARTY-LICENSES.md, which is distributed with the software.
+   Nothing here limits the rights those licences give you in those
+   components.
+
+5. No warranty
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+   The software sends keyboard and mouse input to a machine that may be
+   moving. Keeping a robot safe while it is operated remotely is the
+   operator's responsibility.
+
+6. Limit of liability
+
+   IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+   CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT
+   OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR
+   THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+7. Ending
+
+   This licence ends automatically if you break section 2. When it ends you
+   must stop using the software and remove your copies.
+
+Contact: kaikangofusan@gmail.com
