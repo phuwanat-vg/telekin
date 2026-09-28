@@ -1,0 +1,61 @@
+# Publishes a release from installers built elsewhere.
+#
+# The installers arrive on a branch named incoming/<tag>, pushed just before
+# the tag itself. This workflow attaches them to a GitHub Release, takes the
+# release notes from CHANGELOG.md, rebuilds the signed apt repository, and
+# removes the incoming branch.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the installers
+        run: |
+          git fetch --depth 1 origin "refs/heads/incoming/${GITHUB_REF_NAME}"
+          mkdir dist
+          git archive FETCH_HEAD | tar -x -C dist
+          ls -l dist
+          test -f dist/latest.json
+
+      - name: Release notes from the changelog
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # Everything under this version's heading, up to the next one.
+          awk -v want="## ${version} " '
+              index($0, want) == 1 { on = 1; next }
+              on && /^## /         { exit }
+              on                   { print }
+          ' CHANGELOG.md > notes.md
+          test -s notes.md || echo "Telekin ${version}" > notes.md
+          cat notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body_path: notes.md
+          make_latest: "true"
+
+      - name: Remove the incoming branch
+        run: git push origin --delete "incoming/${GITHUB_REF_NAME}"
+
+  # Chained rather than triggered by the release event, which releases made
+  # with the workflow's own token do not fire.
+  apt:
+    needs: publish
+    uses: ./.github/workflows/apt-repo.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit

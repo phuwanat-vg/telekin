@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.13 — 2026-09-28
+
+- Telekin is closed source from this version. It stays free to use, including
+  for commercial work; redistribution and modification are not permitted. The
+  terms are in LICENSE. Versions 1.0.0 to 1.0.12 were released under the MIT
+  License and remain under it.
+- Installers carry THIRD-PARTY-LICENSES.md, the notices of the open-source
+  components Telekin is built on.
+- Nothing changes for installed copies: the download page, the update check
+  and the apt repository are where they were.
+
 ## 1.0.12 — 2026-09-10
 
 - Colour: white is white again. The robot encoded limited-range video
