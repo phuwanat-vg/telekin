@@ -21,10 +21,12 @@ light enough to run beside ROS 2.
 
 ### 1. On the robot
 
-Paste these four lines into a terminal:
+Paste these lines into a terminal. The first one installs `curl`, which a
+fresh Ubuntu does not always have:
 
 ```bash
-curl -fsSL https://phuwanat-vg.github.io/telekin/telekin-archive-keyring.gpg -o /tmp/telekin-archive-keyring.gpg && sudo install -m 644 /tmp/telekin-archive-keyring.gpg /usr/share/keyrings/
+sudo apt install -y curl
+sudo curl -fsSL https://phuwanat-vg.github.io/telekin/telekin-archive-keyring.gpg -o /usr/share/keyrings/telekin-archive-keyring.gpg
 echo "deb [signed-by=/usr/share/keyrings/telekin-archive-keyring.gpg] https://phuwanat-vg.github.io/telekin stable main" | sudo tee /etc/apt/sources.list.d/telekin.list
 sudo apt update
 sudo apt install telekin-host
@@ -45,7 +47,7 @@ That one command does everything a robot needs. See
 | Platform | How to install |
 |---|---|
 | **Windows** | Download `telekin-…-windows-x64-setup.exe` from the [latest release](https://github.com/phuwanat-vg/telekin/releases/latest) and run it. No admin rights needed |
-| **Ubuntu** | Add the repository with the first two lines above, then `sudo apt update && sudo apt install telekin` |
+| **Ubuntu** | Add the repository with the first three lines above, then `sudo apt update && sudo apt install telekin` |
 | **macOS** | Download `telekin-…-macos.dmg` and drag it to Applications. The first time, right-click the app and choose Open |
 
 ### 3. Connect
@@ -112,7 +114,7 @@ Nothing updates by itself.
 | **Robot is not in the scan list** | Different subnet, or the service is not running | Type the robot's IP address instead. On the robot, run `systemctl status chassis@$USER` |
 | **Connection drops after a while** | Ubuntu put the robot to sleep | `sudo telekin-robot-setup nosleep $USER` |
 | **Cannot connect at all** | Firewall blocks UDP port 9631 | `sudo telekin-robot-setup firewall` |
-| `apt update` says **NO_PUBKEY** | The key file did not download | Run the first install line again |
+| `apt update` says **NO_PUBKEY** | The key file did not download, usually because `curl` was missing | `sudo apt install -y curl`, then run the `curl` line again |
 | Service fails with **port already taken** | A second copy of `chassis` is running | `sudo systemctl restart chassis@$USER` |
 
 To see what is set on a robot without changing anything:
