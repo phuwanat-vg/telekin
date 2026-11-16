@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.1.0 — 2026-11-17
+
+- A new look for the viewer, on the same layout: every button and field is
+  where it was. Cards on a light grey ground, clearer type (Inter, with
+  JetBrains Mono for addresses, sizes and times), and drawn icons on the
+  buttons.
+- Thai file names, Thai folder paths and Thai text in the editor now display.
+  They used to show as empty boxes. Vowels and tone marks stack correctly.
+- Connection screen: the scan button sits beside "Robots", the address box
+  moved under the list, and each robot shows its account. The card you sign
+  in from says what protects the link: encrypted with TLS 1.3, and whether
+  the robot's identity is pinned, with a link to pin it. It fits the smallest
+  window without scrolling.
+- Session bar: the robot's name and the address actually in use, a Desktop /
+  Files switch, and live frame rate, delay and bandwidth. On a narrow window
+  it leaves things out rather than wrapping.
+- Settings are grouped into Picture, Robot and Timing. Timing is one bar
+  showing how much of the delay is capture, encode and network.
+- Files: column headings for name, size and date; long names are cut with an
+  ellipsis instead of running into the columns; the transfer list shows each
+  copy's progress, Done or Failed on one line.
+- The Immersive reminder ("press F11 to leave") could not be read: it was
+  black text on black. Fixed.
+- The viewer is about 1.3 MB larger, for the fonts.
+
 ## 1.0.13 — 2026-09-28
 
 - Telekin is closed source from this version. It stays free to use, including
